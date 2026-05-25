@@ -1,0 +1,212 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { supabaseBrowser } from "@/lib/supabase/browser";
+import { AddExchangeDialog } from "./AddExchangeDialog";
+import { AddOffchainBalanceDialog } from "./AddOffchainBalanceDialog";
+import { UsdValue } from "./MaskedValue";
+import { formatRelative } from "@/lib/format";
+
+export interface ExchangeRow {
+  id: string;
+  provider: string;
+  label: string;
+  totalUsd: number;
+  lastSyncedAt: string | null;
+  balanceCount: number;
+}
+
+export interface OffchainRow {
+  id: string;
+  label: string;
+  kind: string;
+  currency: string;
+  amount: number;
+  /** Best-effort USD value (for non-USD currencies we leave as raw amount). */
+  valueUsd: number;
+}
+
+const KIND_LABEL: Record<string, string> = {
+  cash: "Cash",
+  bank: "Bank",
+  credit_card: "Credit card",
+  brokerage: "Brokerage",
+  other: "Other",
+};
+
+export function ExchangesAndOffchain({
+  exchanges,
+  offchain,
+}: {
+  exchanges: ExchangeRow[];
+  offchain: OffchainRow[];
+}) {
+  const router = useRouter();
+  const [refreshing, setRefreshing] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function refresh(exId: string | null) {
+    setRefreshing(exId ?? "all");
+    setError(null);
+    try {
+      const res = await fetch("/api/exchanges/refresh", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(exId ? { exchangeId: exId } : {}),
+      });
+      const json = (await res.json()) as { error?: string; exchanges?: unknown[] };
+      if (!res.ok) throw new Error(json.error ?? "Refresh failed");
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Refresh failed");
+    } finally {
+      setRefreshing(null);
+    }
+  }
+
+  async function removeExchange(id: string) {
+    if (!confirm("Remove this exchange connection?")) return;
+    await supabaseBrowser().from("crypto_exchanges").delete().eq("id", id);
+    router.refresh();
+  }
+
+  async function removeOffchain(id: string) {
+    if (!confirm("Remove this off-chain balance?")) return;
+    await supabaseBrowser().from("crypto_offchain_balances").delete().eq("id", id);
+    router.refresh();
+  }
+
+  const exchangeTotal = exchanges.reduce((s, e) => s + e.totalUsd, 0);
+  const offchainTotal = offchain.reduce((s, o) => s + o.valueUsd, 0);
+
+  return (
+    <section className="card animate-fade-up space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-lg font-bold text-text">Exchanges & off-chain</h3>
+          <p className="text-xs text-text-muted mt-0.5">
+            CEX balances and manual entries for cash, bank, credit card and other
+            assets.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <AddExchangeDialog />
+          <AddOffchainBalanceDialog />
+        </div>
+      </div>
+
+      {error && (
+        <div className="text-sm text-danger bg-danger/10 rounded-xl px-3 py-2">
+          {error}
+        </div>
+      )}
+
+      {exchanges.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-bold text-text">
+              Exchanges <span className="text-text-muted font-normal">·{" "}
+                <UsdValue value={exchangeTotal} priceUsd={1} /></span>
+            </h4>
+            <button
+              type="button"
+              onClick={() => refresh(null)}
+              disabled={refreshing !== null}
+              className="btn-ghost text-xs"
+            >
+              {refreshing === "all" ? "Refreshing…" : "Refresh all"}
+            </button>
+          </div>
+          <ul className="space-y-2">
+            {exchanges.map((ex) => (
+              <li
+                key={ex.id}
+                className="flex flex-wrap items-center justify-between gap-3 px-3 py-2 rounded-xl border border-border bg-surface-2/40"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-text">{ex.label}</span>
+                    <span className="pill">{ex.provider}</span>
+                  </div>
+                  <div className="text-xs text-text-muted mt-0.5">
+                    {ex.balanceCount} {ex.balanceCount === 1 ? "asset" : "assets"}
+                    {ex.lastSyncedAt && <> · synced {formatRelative(ex.lastSyncedAt)}</>}
+                    {!ex.lastSyncedAt && <> · never synced</>}
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 tabular shrink-0">
+                  <UsdValue
+                    value={ex.totalUsd}
+                    priceUsd={ex.totalUsd > 0 ? 1 : null}
+                    className="font-semibold"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => refresh(ex.id)}
+                    disabled={refreshing !== null}
+                    className="text-xs text-primary hover:text-primary-hover"
+                  >
+                    {refreshing === ex.id ? "…" : "Refresh"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeExchange(ex.id)}
+                    className="text-xs text-text-muted hover:text-danger"
+                  >
+                    Remove
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {offchain.length > 0 && (
+        <div className="space-y-2">
+          <h4 className="text-sm font-bold text-text">
+            Off-chain <span className="text-text-muted font-normal">·{" "}
+              <UsdValue value={offchainTotal} priceUsd={1} /></span>
+          </h4>
+          <ul className="space-y-2">
+            {offchain.map((o) => (
+              <li
+                key={o.id}
+                className="flex flex-wrap items-center justify-between gap-3 px-3 py-2 rounded-xl border border-border bg-surface-2/40"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-text">{o.label}</span>
+                    <span className="pill">{KIND_LABEL[o.kind] ?? o.kind}</span>
+                    <span className="text-xs text-text-muted">{o.currency}</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 tabular shrink-0">
+                  <UsdValue
+                    value={o.valueUsd}
+                    priceUsd={o.currency === "USD" ? 1 : 1}
+                    className={`font-semibold ${o.valueUsd < 0 ? "text-danger" : ""}`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeOffchain(o.id)}
+                    className="text-xs text-text-muted hover:text-danger"
+                  >
+                    Remove
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {exchanges.length === 0 && offchain.length === 0 && (
+        <p className="text-center text-text-muted text-sm py-4">
+          No exchanges or off-chain balances yet. Click the buttons above to add.
+        </p>
+      )}
+    </section>
+  );
+}

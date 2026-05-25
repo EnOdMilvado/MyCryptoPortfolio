@@ -1,0 +1,249 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ================================================================
+   Color theme tokens. Each .theme-* class on <html> swaps the palette.
+   Adding `.dark` on <html> swaps each theme to its dark variant.
+   Colors are stored as space-separated RGB triplets so Tailwind's
+   `<alpha-value>` syntax works in tailwind.config.ts.
+   ================================================================ */
+
+:root,
+.theme-slate {
+  --bg: 247 248 250;
+  --surface: 255 255 255;
+  --surface-2: 241 243 247;
+  --primary: 71 85 105;
+  --primary-hover: 51 65 85;
+  --accent: 100 116 139;
+  --text: 30 41 59;
+  --text-muted: 100 116 139;
+  --border: 226 232 240;
+  --success: 16 185 129;
+  --danger: 239 68 68;
+  --aura-1: 226 232 240;
+  --aura-2: 219 234 254;
+  --aura-3: 241 243 247;
+}
+
+.theme-ocean {
+  --bg: 240 247 255;
+  --surface: 255 255 255;
+  --surface-2: 224 242 254;
+  --primary: 14 116 198;
+  --primary-hover: 7 89 159;
+  --accent: 56 189 248;
+  --text: 12 50 88;
+  --text-muted: 96 122 156;
+  --border: 199 220 240;
+  --success: 16 185 129;
+  --danger: 239 68 68;
+  --aura-1: 207 230 253;
+  --aura-2: 186 230 253;
+  --aura-3: 224 242 254;
+}
+
+.theme-sunset {
+  --bg: 255 247 237;
+  --surface: 255 255 255;
+  --surface-2: 254 232 207;
+  --primary: 234 88 12;
+  --primary-hover: 194 65 12;
+  --accent: 251 146 60;
+  --text: 84 36 12;
+  --text-muted: 153 92 50;
+  --border: 254 215 170;
+  --success: 22 163 74;
+  --danger: 220 38 38;
+  --aura-1: 254 215 170;
+  --aura-2: 254 226 200;
+  --aura-3: 253 232 200;
+}
+
+.theme-forest {
+  --bg: 240 253 244;
+  --surface: 255 255 255;
+  --surface-2: 220 252 231;
+  --primary: 22 163 74;
+  --primary-hover: 21 128 61;
+  --accent: 132 204 22;
+  --text: 20 60 38;
+  --text-muted: 75 116 90;
+  --border: 187 247 208;
+  --success: 22 163 74;
+  --danger: 220 38 38;
+  --aura-1: 200 244 218;
+  --aura-2: 220 252 231;
+  --aura-3: 217 249 157;
+}
+
+/* ---------- Dark variants ---------- */
+
+.dark.theme-slate,
+.dark:not([class*="theme-"]) {
+  --bg: 15 23 42;
+  --surface: 30 41 59;
+  --surface-2: 51 65 85;
+  --primary: 148 163 184;
+  --primary-hover: 203 213 225;
+  --accent: 100 116 139;
+  --text: 241 245 249;
+  --text-muted: 148 163 184;
+  --border: 51 65 85;
+  --success: 52 211 153;
+  --danger: 248 113 113;
+  --aura-1: 30 41 59;
+  --aura-2: 15 23 42;
+  --aura-3: 51 65 85;
+}
+
+.dark.theme-ocean {
+  --bg: 8 47 73;
+  --surface: 14 64 99;
+  --surface-2: 23 84 122;
+  --primary: 56 189 248;
+  --primary-hover: 125 211 252;
+  --accent: 14 165 233;
+  --text: 224 242 254;
+  --text-muted: 125 159 184;
+  --border: 30 70 110;
+  --success: 52 211 153;
+  --danger: 248 113 113;
+  --aura-1: 14 64 99;
+  --aura-2: 23 84 122;
+  --aura-3: 8 47 73;
+}
+
+.dark.theme-sunset {
+  --bg: 41 18 10;
+  --surface: 67 30 17;
+  --surface-2: 92 44 22;
+  --primary: 251 146 60;
+  --primary-hover: 253 186 116;
+  --accent: 254 215 170;
+  --text: 254 240 220;
+  --text-muted: 180 130 95;
+  --border: 92 50 30;
+  --success: 134 199 122;
+  --danger: 248 113 113;
+  --aura-1: 92 44 22;
+  --aura-2: 67 30 17;
+  --aura-3: 80 35 15;
+}
+
+.dark.theme-forest {
+  --bg: 10 35 22;
+  --surface: 18 50 32;
+  --surface-2: 28 64 42;
+  --primary: 132 204 22;
+  --primary-hover: 163 230 53;
+  --accent: 187 247 208;
+  --text: 220 252 231;
+  --text-muted: 130 170 145;
+  --border: 35 80 50;
+  --success: 132 204 22;
+  --danger: 248 113 113;
+  --aura-1: 28 64 42;
+  --aura-2: 18 50 32;
+  --aura-3: 22 60 38;
+}
+
+html,
+body {
+  background-color: rgb(var(--bg));
+  color: rgb(var(--text));
+  min-height: 100%;
+}
+
+body {
+  position: relative;
+  overflow-x: hidden;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(60rem 40rem at 10% -10%, rgb(var(--aura-1) / 0.65), transparent 70%),
+    radial-gradient(50rem 35rem at 110% 10%, rgb(var(--aura-2) / 0.55), transparent 70%),
+    radial-gradient(55rem 35rem at 50% 110%, rgb(var(--aura-3) / 0.45), transparent 70%);
+  z-index: -1;
+  pointer-events: none;
+  transition: background 0.6s ease;
+}
+
+.dark body::before {
+  opacity: 0.55;
+}
+
+@layer components {
+  .card {
+    @apply bg-surface/90 backdrop-blur-sm border border-border rounded-xl2 shadow-soft p-4 sm:p-6;
+  }
+  .card-tight {
+    @apply bg-surface/90 backdrop-blur-sm border border-border rounded-xl2 shadow-soft p-3 sm:p-4;
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-full bg-primary text-white font-semibold shadow-pill transition hover:bg-primary-hover active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-full bg-surface-2 text-text font-medium transition hover:bg-border active:scale-95;
+  }
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-full bg-danger/10 text-danger font-medium transition hover:bg-danger/20 active:scale-95;
+  }
+  .input {
+    @apply w-full px-4 py-2.5 rounded-xl bg-surface border border-border text-text placeholder:text-text-muted/70 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition;
+  }
+  .pill {
+    @apply inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface-2 text-xs font-semibold text-text-muted;
+  }
+  .label {
+    @apply block text-sm font-semibold text-text mb-1.5;
+  }
+}
+
+/* In dark mode the slate "primary" is light grey; force the white-on-primary
+   buttons to use a dark foreground so contrast stays readable. */
+.dark.theme-slate .btn-primary,
+.dark:not([class*="theme-"]) .btn-primary {
+  color: rgb(15 23 42);
+}
+
+/* Mono digits for currency tables */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* iOS-style jiggle for cards in edit mode. Two staggered variants applied
+   to alternating cards so the wiggle looks organic instead of synchronised. */
+@keyframes wiggle-a {
+  0% { transform: rotate(-0.9deg); }
+  50% { transform: rotate(0.9deg); }
+  100% { transform: rotate(-0.9deg); }
+}
+@keyframes wiggle-b {
+  0% { transform: rotate(0.9deg); }
+  50% { transform: rotate(-0.9deg); }
+  100% { transform: rotate(0.9deg); }
+}
+.animate-wiggle-a {
+  animation: wiggle-a 0.22s ease-in-out infinite;
+  transform-origin: center;
+}
+.animate-wiggle-b {
+  animation: wiggle-b 0.24s ease-in-out infinite;
+  transform-origin: center;
+}
+
+/* Hide the spinner on number inputs */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+}
