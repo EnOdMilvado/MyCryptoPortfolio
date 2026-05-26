@@ -333,7 +333,7 @@ export function DashboardClient({
                       {!editingPortfolios &&
                         nftSummary &&
                         nftSummary.totalCount > 0 && (
-                          <NftSummaryTile summary={nftSummary} />
+                          <NftSummaryTile key="nft-summary-tile" summary={nftSummary} />
                         )}
                     </section>
                   ) : (
@@ -343,6 +343,7 @@ export function DashboardClient({
                         nftSummary &&
                         nftSummary.totalCount > 0 && (
                           <NftSummaryTile
+                            key="nft-summary-tile"
                             summary={nftSummary}
                             variant="list"
                           />

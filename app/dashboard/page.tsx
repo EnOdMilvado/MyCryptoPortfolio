@@ -251,7 +251,7 @@ export default async function DashboardPage() {
           oldestFetchedAt={oldestFetchedAt}
           snapshots={snapshots}
           nftSummary={nftSummary}
-          beforeTables={<ExchangesAndOffchain exchanges={exchanges} offchain={offchain} />}
+          beforeTables={<ExchangesAndOffchain key="exchanges-card" exchanges={exchanges} offchain={offchain} />}
         />
       </main>
     </>

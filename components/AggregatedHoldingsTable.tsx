@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { CmcLink } from "./CmcLink";
 import { CHAIN_LABEL } from "@/lib/chains/types";
+import { tokenExplorerUrl } from "@/lib/chains/explorers";
 import { formatAmount, formatBtc, shortenAddress } from "@/lib/format";
 import { isLikelySpam } from "@/lib/spam";
 import { useAllHoldings } from "./AllHoldingsView";
@@ -418,6 +420,7 @@ export function AggregatedHoldingsTable({
                   />
                 </th>
               )}
+              <th className="px-2 py-2.5 w-8 pr-2" aria-label="External" />
             </tr>
           </thead>
           <tbody>
@@ -453,6 +456,8 @@ export function AggregatedHoldingsTable({
                           {r.name}
                         </div>
                       )}
+                      <AggAddressLink contributors={r.contributors} />
+
                       {/* Mobile-only secondary line: 24h % + amount + wallet
                           count. Tap to expand contributors. */}
                       <button
@@ -536,10 +541,13 @@ export function AggregatedHoldingsTable({
                         />
                       </td>
                     )}
+                    <td className="px-2 py-2.5 align-middle text-center w-8 pr-2">
+                      <CmcLink symbol={r.symbol} />
+                    </td>
                   </tr>
                   {isExpanded && (
                     <tr key={`${r.key}-expand`} className="bg-surface-2/40">
-                      <td colSpan={showBtc ? 7 : 6} className="px-4 py-3">
+                      <td colSpan={showBtc ? 8 : 7} className="px-4 py-3">
                         <div className="text-xs text-text-muted mb-2">
                           {r.contributors.length}{" "}
                           {r.contributors.length === 1 ? "holding" : "holdings"} on{" "}
@@ -631,7 +639,7 @@ export function AggregatedHoldingsTable({
             {sorted.length === 0 && (
               <tr>
                 <td
-                  colSpan={showBtc ? 7 : 6}
+                  colSpan={showBtc ? 8 : 7}
                   className="px-3 py-6 text-center text-text-muted"
                 >
                   No assets match the current filter
@@ -659,6 +667,46 @@ export function AggregatedHoldingsTable({
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * Shows the shortened contract address of the single biggest contributor
+ * (by USD value) for an aggregated row, with a deep link to that chain's
+ * block explorer. Falls back silently when the contributor has no
+ * routable address (e.g. native BTC, synthesized exchange holdings).
+ */
+function AggAddressLink({ contributors }: { contributors: HoldingRow[] }) {
+  if (contributors.length === 0) return null;
+  let top = contributors[0];
+  for (const c of contributors) {
+    if (c.valueUsd > top.valueUsd) top = c;
+  }
+  const contract = (top.contract ?? "").trim();
+  if (!contract || contract === "native") return null;
+  const url = tokenExplorerUrl(top.chain, contract);
+  const short = shortenAddress(contract, 6, 4);
+  if (!url) {
+    return (
+      <div
+        className="text-[11px] font-mono text-text-muted truncate"
+        title={contract}
+      >
+        {short}
+      </div>
+    );
+  }
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer noopener"
+      onClick={(e) => e.stopPropagation()}
+      className="text-[11px] font-mono text-primary hover:text-primary-hover truncate inline-block max-w-full"
+      title={`${contract} · ${CHAIN_LABEL[top.chain]}`}
+    >
+      {short} ↗
+    </a>
   );
 }
 

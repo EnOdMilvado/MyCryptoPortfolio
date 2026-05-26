@@ -204,6 +204,13 @@ export function AllHoldingsOverview({
       symbol: string | null;
       count: number;
       wallets: Set<string>;
+      changeWeighted: number;
+      changeWeight: number;
+      /** The single biggest contributor (by USD) — used to deep-link the
+       *  legend address to a concrete chain explorer. */
+      topChain: ChainId | null;
+      topContract: string | null;
+      topValue: number;
     }
     const map = new Map<string, Bucket>();
     for (const r of includedRows) {
@@ -211,11 +218,22 @@ export function AllHoldingsOverview({
       const k = assetKey(r);
       const display = (r.symbol ?? r.name ?? k).trim();
       const cur = map.get(k);
+      const change = r.priceChange24h ?? null;
+      const w = r.valueUsd > 0 ? r.valueUsd : 0;
       if (cur) {
         cur.value += r.valueUsd;
         cur.amount += r.amount;
         cur.count += 1;
         cur.wallets.add(r.walletId);
+        if (change != null && w > 0) {
+          cur.changeWeighted += change * w;
+          cur.changeWeight += w;
+        }
+        if (r.valueUsd > cur.topValue) {
+          cur.topValue = r.valueUsd;
+          cur.topChain = r.chain;
+          cur.topContract = r.contract;
+        }
       } else {
         map.set(k, {
           label: display,
@@ -224,6 +242,11 @@ export function AllHoldingsOverview({
           symbol: r.symbol,
           count: 1,
           wallets: new Set([r.walletId]),
+          changeWeighted: change != null && w > 0 ? change * w : 0,
+          changeWeight: change != null && w > 0 ? w : 0,
+          topChain: r.chain,
+          topContract: r.contract,
+          topValue: r.valueUsd,
         });
       }
     }
@@ -234,9 +257,11 @@ export function AllHoldingsOverview({
     // them for unbranded coins later in the same slice list.
     const usedPaletteIdx = new Set<number>();
     const pieces: PieSlice[] = top.map(([k, info], i) => {
+      // Show only wallet count (drop the redundant "X holdings" — the address
+      // link below makes it clearer where the token actually lives).
       const parts: string[] = [];
-      if (info.wallets.size > 1) parts.push(`${info.wallets.size} wallets`);
-      if (info.count > info.wallets.size) parts.push(`${info.count} holdings`);
+      const wc = info.wallets.size;
+      parts.push(`${wc} ${wc === 1 ? "wallet" : "wallets"}`);
       const symKey = (info.symbol ?? info.label).trim().toUpperCase();
       const brand = resolveCoinColor(symKey, dark);
       let color: string;
@@ -251,6 +276,8 @@ export function AllHoldingsOverview({
         usedPaletteIdx.add(idx);
         color = CHART_COLORS[idx];
       }
+      const change24h =
+        info.changeWeight > 0 ? info.changeWeighted / info.changeWeight : null;
       return {
         label: info.label,
         value: info.value,
@@ -261,6 +288,9 @@ export function AllHoldingsOverview({
         // Aggregate key — matches what AggregatedHoldingsTable computes,
         // so clicks can target the same row.
         key: k,
+        change24h,
+        primaryChain: info.topChain ?? undefined,
+        primaryContract: info.topContract ?? undefined,
       };
     });
     if (rest.length > 0) {
@@ -280,24 +310,37 @@ export function AllHoldingsOverview({
   // don't roll the long tail into "Other" — each coin gets its own bar so
   // the user can scroll right through them individually.
   const barRows: BarDatum[] = useMemo(() => {
-    const map = new Map<
-      string,
-      { label: string; symbol: string | null; value: number; amount: number }
-    >();
+    interface BarBucket {
+      label: string;
+      symbol: string | null;
+      value: number;
+      amount: number;
+      changeWeighted: number;
+      changeWeight: number;
+    }
+    const map = new Map<string, BarBucket>();
     for (const r of includedRows) {
       if (r.valueUsd <= 0) continue;
       const k = assetKey(r);
       const display = (r.symbol ?? r.name ?? k).trim();
       const cur = map.get(k);
+      const change = r.priceChange24h ?? null;
+      const w = r.valueUsd;
       if (cur) {
         cur.value += r.valueUsd;
         cur.amount += r.amount;
+        if (change != null && w > 0) {
+          cur.changeWeighted += change * w;
+          cur.changeWeight += w;
+        }
       } else {
         map.set(k, {
           label: display,
           symbol: r.symbol,
           value: r.valueUsd,
           amount: r.amount,
+          changeWeighted: change != null && w > 0 ? change * w : 0,
+          changeWeight: change != null && w > 0 ? w : 0,
         });
       }
     }
@@ -310,6 +353,7 @@ export function AllHoldingsOverview({
         value: v.value,
         amount: v.amount,
         amountSymbol: v.symbol,
+        change24h: v.changeWeight > 0 ? v.changeWeighted / v.changeWeight : null,
         // Aggregate key — matches the table's aggregateKey so a click can
         // expand the same coin's row.
         key: k,

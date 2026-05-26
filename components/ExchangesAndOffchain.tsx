@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import { AddExchangeDialog } from "./AddExchangeDialog";
@@ -176,10 +177,14 @@ export function ExchangesAndOffchain({
             {exchanges.map((ex) => (
               <li
                 key={ex.id}
-                onClick={() => router.push(`/dashboard/exchange/${ex.id}`)}
-                className="group flex flex-wrap items-center justify-between gap-3 px-3 py-2 rounded-xl border border-border bg-surface-2/40 transition hover:border-primary/50 cursor-pointer"
+                className="group relative flex flex-wrap items-center justify-between gap-3 px-3 py-2 rounded-xl border border-border bg-surface-2/40 transition hover:border-primary/50"
               >
-                <div className="min-w-0 flex-1">
+                <Link
+                  href={`/dashboard/exchange/${ex.id}`}
+                  className="absolute inset-0 z-0"
+                  aria-label={`Open ${ex.label}`}
+                />
+                <div className="min-w-0 flex-1 relative z-10 pointer-events-none">
                   <div className="flex items-center gap-2">
                     <span className="font-semibold text-text group-hover:text-primary">
                       {ex.label}
@@ -193,10 +198,7 @@ export function ExchangesAndOffchain({
                       : " · never synced"}
                   </div>
                 </div>
-                <div
-                  className="flex items-center gap-3 tabular shrink-0"
-                  onClick={(e) => e.stopPropagation()}
-                >
+                <div className="flex items-center gap-3 tabular shrink-0 relative z-10">
                   <UsdValue
                     value={adjustedTotal(ex)}
                     priceUsd={adjustedTotal(ex) > 0 ? 1 : null}

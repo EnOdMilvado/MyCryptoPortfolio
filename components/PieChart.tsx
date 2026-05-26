@@ -1,7 +1,9 @@
 "use client";
 
-import { formatAmount, formatBtc, formatUsd } from "@/lib/format";
+import { formatAmount, formatBtc, formatUsd, shortenAddress } from "@/lib/format";
+import { tokenExplorerUrl } from "@/lib/chains/explorers";
 import { useHideBalance } from "./HideBalanceProvider";
+import { CmcLink } from "./CmcLink";
 
 export interface PieSlice {
   label: string;
@@ -14,6 +16,13 @@ export interface PieSlice {
   amountSymbol?: string | null;
   /** Identifier used by onSliceClick — e.g. the aggregate key "BTC". */
   key?: string;
+  /** USD-weighted 24h % change of the underlying holdings (null = unknown). */
+  change24h?: number | null;
+  /** Chain of the largest-by-USD contributor (used to deep-link to its
+   *  explorer page). When undefined the legend skips the address link. */
+  primaryChain?: import("@/lib/chains/types").ChainId;
+  /** Contract address on `primaryChain` for the same contributor. */
+  primaryContract?: string;
 }
 
 /** Vivid palette that works on both light and dark themes. */
@@ -227,11 +236,13 @@ export function PieChart({
         <div className="flex items-center justify-between gap-2 pb-2 mb-2 border-b border-border text-[11px] uppercase tracking-wide font-semibold text-text-muted">
           <span className="pl-5">Asset</span>
           <div className="flex items-center gap-2 sm:gap-4 shrink-0">
+            <span className="text-left w-14 sm:w-16">24h</span>
             <span className="text-left w-12 sm:w-14">%</span>
             <span className="text-left w-24 sm:w-28">USD</span>
             {btcPriceUsd != null && btcPriceUsd > 0 && (
               <span className="text-left w-24 sm:w-28">BTC</span>
             )}
+            <span className="w-5 text-center" aria-hidden></span>
           </div>
         </div>
         <ul className="space-y-2.5">
@@ -241,8 +252,12 @@ export function PieChart({
               btcPriceUsd != null && btcPriceUsd > 0
                 ? s.value / btcPriceUsd
                 : null;
+            const explorerUrl =
+              s.primaryChain && s.primaryContract
+                ? tokenExplorerUrl(s.primaryChain, s.primaryContract)
+                : null;
             const hasSecondLine =
-              (s.amount != null && s.amountSymbol) || !!s.sub;
+              (s.amount != null && s.amountSymbol) || !!s.sub || !!explorerUrl;
             const clickable = onSliceClick && s.key;
             return (
               <li
@@ -257,7 +272,7 @@ export function PieChart({
                 }
                 title={clickable ? `Click to see wallets holding ${s.label}` : undefined}
               >
-                {/* Line 1: color + label/symbol + % + USD + (optional) BTC */}
+                {/* Line 1: color + label/symbol + 24h + % + USD + (optional) BTC + CMC link */}
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0 flex-1">
                     <span
@@ -270,6 +285,20 @@ export function PieChart({
                     </span>
                   </div>
                   <div className="flex items-center gap-2 sm:gap-4 shrink-0 tabular">
+                    <span className="text-xs text-left w-14 sm:w-16 font-semibold">
+                      {s.change24h == null ? (
+                        <span className="text-text-muted">—</span>
+                      ) : (
+                        <span
+                          className={
+                            s.change24h >= 0 ? "text-success" : "text-danger"
+                          }
+                        >
+                          {s.change24h >= 0 ? "+" : ""}
+                          {s.change24h.toFixed(2)}%
+                        </span>
+                      )}
+                    </span>
                     <span className="text-text-muted text-xs text-left w-12 sm:w-14">
                       {pct.toFixed(1)}%
                     </span>
@@ -281,9 +310,14 @@ export function PieChart({
                         {hidden ? "••••" : formatBtc(btcEquiv)}
                       </span>
                     )}
+                    <span className="w-5 flex items-center justify-center">
+                      {s.key && s.label !== "Other" && (
+                        <CmcLink symbol={s.amountSymbol ?? s.label} />
+                      )}
+                    </span>
                   </div>
                 </div>
-                {/* Line 2: amount of token + wallet/holding count */}
+                {/* Line 2: amount + wallets count + token address (link to explorer) */}
                 {hasSecondLine && (
                   <div className="mt-0.5 pl-5 text-xs text-text-muted flex flex-wrap items-center gap-x-2 gap-y-0.5">
                     {s.amount != null && s.amountSymbol && (
@@ -293,6 +327,21 @@ export function PieChart({
                     )}
                     {s.sub && (
                       <span className="text-text-muted/80">{s.sub}</span>
+                    )}
+                    {explorerUrl && s.primaryContract && (
+                      <>
+                        <span className="text-text-muted/50">·</span>
+                        <a
+                          href={explorerUrl}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          onClick={(e) => e.stopPropagation()}
+                          className="font-mono text-primary hover:text-primary-hover"
+                          title={s.primaryContract}
+                        >
+                          {shortenAddress(s.primaryContract, 6, 4)} ↗
+                        </a>
+                      </>
                     )}
                   </div>
                 )}

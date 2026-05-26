@@ -6,12 +6,25 @@ import { tokenExplorerUrl, holdersExplorerUrl } from "@/lib/chains/explorers";
 import { formatAmount, shortenAddress } from "@/lib/format";
 import { BtcValue, UsdValue } from "./MaskedValue";
 import { ChainPill } from "./ChainPill";
+import { CmcLink } from "./CmcLink";
 import type { HoldingRow } from "./HoldingsTable";
 
 interface NetworkGroup {
   chain: ChainId;
   totalUsd: number;
   holdings: HoldingRow[];
+  change24h: number | null;
+}
+
+function weightedChange24h(rows: HoldingRow[]): number | null {
+  let num = 0;
+  let den = 0;
+  for (const r of rows) {
+    if (r.priceChange24h == null || r.valueUsd <= 0) continue;
+    num += r.priceChange24h * r.valueUsd;
+    den += r.valueUsd;
+  }
+  return den > 0 ? num / den : null;
 }
 
 /**
@@ -48,8 +61,14 @@ export function WalletNetworkBreakdown({
           chain: r.chain,
           totalUsd: isOn ? r.valueUsd : 0,
           holdings: [r],
+          change24h: null, // filled below
         });
       }
+    }
+    // Compute 24h weighted change per chain — using ONLY included rows.
+    for (const g of byChain.values()) {
+      const includedRows = g.holdings.filter((r) => !excluded.has(rowKey(r)));
+      g.change24h = weightedChange24h(includedRows);
     }
     return [...byChain.values()].sort((a, b) => b.totalUsd - a.totalUsd);
   }, [rows, excluded, rowKey]);
@@ -116,6 +135,16 @@ export function WalletNetworkBreakdown({
                 />
                 <span className="ml-1 opacity-60">· {pct.toFixed(1)}%</span>
               </span>
+              {g.change24h != null && (
+                <span
+                  className={`text-[10px] font-semibold tabular ${
+                    g.change24h >= 0 ? "text-success" : "text-danger"
+                  }`}
+                >
+                  {g.change24h >= 0 ? "+" : ""}
+                  {g.change24h.toFixed(2)}%
+                </span>
+              )}
               <span className="text-[10px] text-text-muted">
                 {g.holdings.length}
               </span>
@@ -170,6 +199,7 @@ function NetworkHoldingsTable({
             <th className="px-3 py-2 text-right">Buy</th>
             <th className="px-3 py-2 text-left">Address</th>
             <th className="px-3 py-2 text-left">Holders</th>
+            <th className="px-2 py-2 w-8" aria-label="External" />
           </tr>
         </thead>
         <tbody>
@@ -272,6 +302,9 @@ function NetworkHoldingsTable({
                   ) : (
                     <span className="text-xs text-text-muted">—</span>
                   )}
+                </td>
+                <td className="px-2 py-2 text-center">
+                  <CmcLink symbol={r.symbol ?? r.name} />
                 </td>
               </tr>
             );

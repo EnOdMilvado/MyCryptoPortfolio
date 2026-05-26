@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { UsdValue, BtcValue } from "../MaskedValue";
 import { formatAmount } from "@/lib/format";
 import { HoldingsBarChart, type BarDatum } from "../HoldingsBarChart";
+import { CmcLink } from "../CmcLink";
 import type { SpotRow } from "../ExchangeDetailView";
 
 type SortKey = "asset" | "amount" | "price" | "value" | "btc";
@@ -134,6 +135,7 @@ export function ExchangeSpotTable({
                   ≈ BTC
                 </Th>
               )}
+              <th className="px-2 py-2 w-8" aria-label="External" />
             </tr>
           </thead>
           <tbody>
@@ -186,6 +188,9 @@ export function ExchangeSpotTable({
                       {btcEquiv != null ? <BtcValue value={btcEquiv} /> : "—"}
                     </td>
                   )}
+                  <td className="px-2 py-2 text-center">
+                    <CmcLink symbol={r.asset} />
+                  </td>
                 </tr>
               );
             })}

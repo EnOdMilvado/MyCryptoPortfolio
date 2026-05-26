@@ -5,6 +5,7 @@ import { CHAIN_LABEL, type ChainId } from "@/lib/chains/types";
 import { formatAmount, formatBtc } from "@/lib/format";
 import { isLikelySpam } from "@/lib/spam";
 import { ChainPill } from "./ChainPill";
+import { CmcLink } from "./CmcLink";
 import { CopyButton } from "./CopyButton";
 import { UsdValue } from "./MaskedValue";
 import { useHideBalance } from "./HideBalanceProvider";
@@ -44,13 +45,16 @@ type SortKey =
 type SortDir = "asc" | "desc";
 
 interface ColumnDef {
-  key: SortKey;
+  /** `SortKey` for sortable columns, or a freeform string for display-only
+   *  columns (e.g. the trailing CMC link icon). */
+  key: SortKey | string;
   label: string;
   numeric?: boolean;
   /** Optional alignment for header + cell text. Defaults to "start". */
   align?: "start" | "end";
   render: (r: HoldingRow) => React.ReactNode;
-  filterValue: (r: HoldingRow) => string;
+  /** Omit on display-only columns to disable filter input. */
+  filterValue?: (r: HoldingRow) => string;
 }
 
 /** Small BTC cell that respects the global Hide-balance toggle. */
@@ -179,6 +183,11 @@ function buildColumns(btcPriceUsd: number | null | undefined): ColumnDef[] {
         />
       ),
     },
+    {
+      key: "cmc",
+      label: "",
+      render: (r) => <CmcLink symbol={r.symbol ?? r.name} />,
+    },
   );
 
   return cols;
@@ -243,7 +252,7 @@ export function HoldingsTable({
     return visibleRows.filter((r) =>
       active.every(([key, value]) => {
         const col = COLUMNS.find((c) => c.key === key);
-        if (!col) return true;
+        if (!col || !col.filterValue) return true;
         return col.filterValue(r).includes(value!.trim().toLowerCase());
       }),
     );
@@ -369,30 +378,39 @@ export function HoldingsTable({
               {COLUMNS.map((c) => {
                 const active = sortKey === c.key;
                 const isEnd = c.align === "end";
+                const sortable = !!c.filterValue;
                 return (
                   <th
                     key={c.key}
-                    className={`px-3 py-3 whitespace-nowrap ${isEnd ? "text-right" : "text-left"}`}
+                    className={`px-3 py-3 whitespace-nowrap ${isEnd ? "text-right" : "text-left"} ${
+                      sortable ? "" : "w-8"
+                    }`}
                   >
-                    <button
-                      type="button"
-                      onClick={() => toggleSort(c.key)}
-                      className={`inline-flex items-center gap-1 font-semibold ${active ? "text-primary" : "hover:text-text"}`}
-                    >
-                      {c.label}
-                      <span className="text-xs">
-                        {active ? (sortDir === "asc" ? "↑" : "↓") : "↕"}
-                      </span>
-                    </button>
-                    <input
-                      type="text"
-                      placeholder="Filter"
-                      value={filters[c.key] ?? ""}
-                      onChange={(e) =>
-                        setFilters((f) => ({ ...f, [c.key]: e.target.value }))
-                      }
-                      className="mt-1 block w-full text-xs px-2 py-1 rounded-lg bg-surface border border-border focus:outline-none focus:ring-1 focus:ring-primary/40"
-                    />
+                    {sortable ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => toggleSort(c.key as SortKey)}
+                          className={`inline-flex items-center gap-1 font-semibold ${active ? "text-primary" : "hover:text-text"}`}
+                        >
+                          {c.label}
+                          <span className="text-xs">
+                            {active ? (sortDir === "asc" ? "↑" : "↓") : "↕"}
+                          </span>
+                        </button>
+                        <input
+                          type="text"
+                          placeholder="Filter"
+                          value={filters[c.key] ?? ""}
+                          onChange={(e) =>
+                            setFilters((f) => ({ ...f, [c.key]: e.target.value }))
+                          }
+                          className="mt-1 block w-full text-xs px-2 py-1 rounded-lg bg-surface border border-border focus:outline-none focus:ring-1 focus:ring-primary/40"
+                        />
+                      </>
+                    ) : (
+                      <span className="sr-only">{c.label || "External"}</span>
+                    )}
                   </th>
                 );
               })}

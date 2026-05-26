@@ -9,6 +9,7 @@ import {
   type PieSlice,
 } from "./PieChart";
 import { useTheme } from "./ThemeProvider";
+import { CmcLink } from "./CmcLink";
 
 export interface BarDatum {
   /** Display label, usually the symbol (e.g. "BTC"). */
@@ -22,6 +23,8 @@ export interface BarDatum {
   amountSymbol?: string | null;
   /** Identifier used by onBarClick — e.g. the aggregate key "BTC". */
   key?: string;
+  /** USD-weighted 24h % change. */
+  change24h?: number | null;
 }
 
 /** Compact USD label that fits inside a narrow bar header. */
@@ -120,6 +123,17 @@ export function HoldingsBarChart({
               <span className="text-[10px] sm:text-[11px] font-semibold text-text tabular whitespace-nowrap">
                 {hidden ? "••••" : compactUsd(b.value)}
               </span>
+              {/* 24h change — green/red badge above the bar. */}
+              {b.change24h != null && (
+                <span
+                  className={`text-[9px] sm:text-[10px] font-semibold tabular whitespace-nowrap ${
+                    b.change24h >= 0 ? "text-success" : "text-danger"
+                  }`}
+                >
+                  {b.change24h >= 0 ? "+" : ""}
+                  {b.change24h.toFixed(2)}%
+                </span>
+              )}
               {/* Bar — fixed visual area 200px tall. */}
               <div
                 className="mt-1 w-full rounded-t-md transition-all"
