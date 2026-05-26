@@ -27,6 +27,7 @@ export interface Transaction {
 export const EXPLORER_TX: Record<ChainId, string> = {
   bitcoin: "https://blockstream.info",
   solana: "https://solscan.io",
+  exchange: "",
   ethereum: "https://etherscan.io",
   polygon: "https://polygonscan.com",
   arbitrum: "https://arbiscan.io",
