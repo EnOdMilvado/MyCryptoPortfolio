@@ -37,6 +37,21 @@ export function PortfolioListItem({
       .eq("id", portfolio.id);
     router.refresh();
   }
+  async function remove(e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    const w = portfolio.walletCount;
+    const first = confirm(
+      `Delete portfolio "${portfolio.name}"?\n\n` +
+        `This will also delete ${w} ${w === 1 ? "wallet" : "wallets"} and all of their cached holdings & NFTs.\n\n` +
+        `This cannot be undone.`,
+    );
+    if (!first) return;
+    const second = confirm(`Last chance — really delete "${portfolio.name}"?`);
+    if (!second) return;
+    await supabaseBrowser().from("crypto_portfolios").delete().eq("id", portfolio.id);
+    router.refresh();
+  }
   const wiggleClass = editing
     ? wiggleVariant === "b"
       ? "animate-wiggle-b"
@@ -115,6 +130,17 @@ export function PortfolioListItem({
             <BtcValue value={portfolio.totalBtc} className="text-xs text-text-muted block" />
           </div>
         </Link>
+      )}
+      {editing && (
+        <button
+          type="button"
+          onClick={remove}
+          className="text-xs text-text-muted hover:text-danger px-1 shrink-0"
+          aria-label="Delete portfolio"
+          title="Delete portfolio + all its wallets"
+        >
+          🗑
+        </button>
       )}
     </div>
   );

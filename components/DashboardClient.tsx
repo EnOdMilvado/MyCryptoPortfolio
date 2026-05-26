@@ -26,6 +26,7 @@ import {
 } from "./ViewToggle";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import type { HoldingRow } from "./HoldingsTable";
+import { useExchangeAssetExcludes } from "./exchange/useExchangeAssetExcludes";
 import type { ReactNode } from "react";
 
 interface PortfolioMeta {
@@ -173,9 +174,28 @@ export function DashboardClient({
     return set;
   }, [excludedPortfolios, excludedWallets, portfolios]);
 
+  // Per-exchange asset excludes (Set of UPPERCASED asset symbols, keyed by
+  // exchangeId) — toggled from the exchange-detail Spot tab and stored in
+  // localStorage. We apply them here so excluded assets disappear from the
+  // main dashboard tables, charts, and the grand total.
+  const exchangeIds = useMemo(() => {
+    const out = new Set<string>();
+    for (const h of holdings) if (h.exchangeId) out.add(h.exchangeId);
+    return [...out];
+  }, [holdings]);
+  const exchangeExcludes = useExchangeAssetExcludes(exchangeIds);
+
   const includedHoldings = useMemo(
-    () => holdings.filter((h) => !effectiveExcludedWallets.has(h.walletId)),
-    [holdings, effectiveExcludedWallets],
+    () =>
+      holdings.filter((h) => {
+        if (effectiveExcludedWallets.has(h.walletId)) return false;
+        if (h.exchangeId && h.symbol) {
+          const ex = exchangeExcludes[h.exchangeId];
+          if (ex && ex.has(h.symbol.toUpperCase())) return false;
+        }
+        return true;
+      }),
+    [holdings, effectiveExcludedWallets, exchangeExcludes],
   );
 
   // Per-portfolio totals + wallet counts based on the *included* holdings.

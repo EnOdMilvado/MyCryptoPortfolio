@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import { AddExchangeDialog } from "./AddExchangeDialog";
@@ -15,6 +15,51 @@ export interface ExchangeRow {
   totalUsd: number;
   lastSyncedAt: string | null;
   balanceCount: number;
+  /** Per-asset breakdown — used to subtract user-excluded assets client-side. */
+  balances: { asset: string; valueUsd: number }[];
+}
+
+/**
+ * Load the per-exchange exclude sets from localStorage on the client. Same
+ * key shape as the exchange-detail page so toggles roundtrip.
+ */
+function useExchangeExcludes(exchanges: ExchangeRow[]): Record<string, Set<string>> {
+  const [excludesByExchange, setExcludesByExchange] = useState<Record<string, Set<string>>>({});
+  useEffect(() => {
+    const out: Record<string, Set<string>> = {};
+    for (const ex of exchanges) {
+      try {
+        const raw = window.localStorage.getItem(`excluded-exchange-assets:${ex.id}`);
+        if (raw) {
+          const arr = JSON.parse(raw) as string[];
+          if (Array.isArray(arr)) out[ex.id] = new Set(arr.map((a) => a.toUpperCase()));
+        }
+      } catch {
+        // ignore corrupt entry
+      }
+    }
+    setExcludesByExchange(out);
+    // Listen to storage changes from other tabs and from our own writes
+    // (manually fired via window.dispatchEvent).
+    function onStorage() {
+      const next: Record<string, Set<string>> = {};
+      for (const ex of exchanges) {
+        try {
+          const raw = window.localStorage.getItem(`excluded-exchange-assets:${ex.id}`);
+          if (raw) {
+            const arr = JSON.parse(raw) as string[];
+            if (Array.isArray(arr)) next[ex.id] = new Set(arr.map((a) => a.toUpperCase()));
+          }
+        } catch {
+          // ignore
+        }
+      }
+      setExcludesByExchange(next);
+    }
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [exchanges]);
+  return excludesByExchange;
 }
 
 export interface OffchainRow {
@@ -77,7 +122,16 @@ export function ExchangesAndOffchain({
     router.refresh();
   }
 
-  const exchangeTotal = exchanges.reduce((s, e) => s + e.totalUsd, 0);
+  const excludes = useExchangeExcludes(exchanges);
+  function adjustedTotal(ex: ExchangeRow): number {
+    const ex2 = excludes[ex.id];
+    if (!ex2 || ex2.size === 0) return ex.totalUsd;
+    return ex.balances.reduce(
+      (s, b) => (ex2.has(b.asset.toUpperCase()) ? s : s + b.valueUsd),
+      0,
+    );
+  }
+  const exchangeTotal = exchanges.reduce((s, e) => s + adjustedTotal(e), 0);
   const offchainTotal = offchain.reduce((s, o) => s + o.valueUsd, 0);
 
   return (
@@ -122,23 +176,30 @@ export function ExchangesAndOffchain({
             {exchanges.map((ex) => (
               <li
                 key={ex.id}
-                className="flex flex-wrap items-center justify-between gap-3 px-3 py-2 rounded-xl border border-border bg-surface-2/40"
+                onClick={() => router.push(`/dashboard/exchange/${ex.id}`)}
+                className="group flex flex-wrap items-center justify-between gap-3 px-3 py-2 rounded-xl border border-border bg-surface-2/40 transition hover:border-primary/50 cursor-pointer"
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="font-semibold text-text">{ex.label}</span>
+                    <span className="font-semibold text-text group-hover:text-primary">
+                      {ex.label}
+                    </span>
                     <span className="pill">{ex.provider}</span>
                   </div>
                   <div className="text-xs text-text-muted mt-0.5">
                     {ex.balanceCount} {ex.balanceCount === 1 ? "asset" : "assets"}
-                    {ex.lastSyncedAt && <> · synced {formatRelative(ex.lastSyncedAt)}</>}
-                    {!ex.lastSyncedAt && <> · never synced</>}
+                    {ex.lastSyncedAt
+                      ? ` · synced ${formatRelative(ex.lastSyncedAt)}`
+                      : " · never synced"}
                   </div>
                 </div>
-                <div className="flex items-center gap-3 tabular shrink-0">
+                <div
+                  className="flex items-center gap-3 tabular shrink-0"
+                  onClick={(e) => e.stopPropagation()}
+                >
                   <UsdValue
-                    value={ex.totalUsd}
-                    priceUsd={ex.totalUsd > 0 ? 1 : null}
+                    value={adjustedTotal(ex)}
+                    priceUsd={adjustedTotal(ex) > 0 ? 1 : null}
                     className="font-semibold"
                   />
                   <button

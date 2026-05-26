@@ -29,7 +29,7 @@ export type EvmChain =
   | "polygon_zkevm"
   | "arbnova";
 
-export type ChainId = "bitcoin" | "solana" | EvmChain;
+export type ChainId = "bitcoin" | "solana" | "exchange" | EvmChain;
 
 export interface RawTokenBalance {
   chain: ChainId;
@@ -134,6 +134,7 @@ export const ALCHEMY_EVM_SUBDOMAIN: Record<EvmChain, string> = {
 export const CHAIN_COLORS: Record<ChainId, string> = {
   bitcoin: "#F7931A",
   solana: "#14F195",
+  exchange: "#7C3AED",
   ethereum: "#627EEA",
   polygon: "#8247E5",
   arbitrum: "#28A0F0",
@@ -167,6 +168,7 @@ export const CHAIN_COLORS: Record<ChainId, string> = {
 export const CHAIN_LABEL: Record<ChainId, string> = {
   bitcoin: "Bitcoin",
   solana: "Solana",
+  exchange: "Exchange",
   ethereum: "Ethereum",
   polygon: "Polygon",
   arbitrum: "Arbitrum",
@@ -232,6 +234,7 @@ export const COINGECKO_PLATFORM: Record<EvmChain | "solana", string> = {
 export const COINGECKO_NATIVE_ID: Record<ChainId, string> = {
   bitcoin: "bitcoin",
   solana: "solana",
+  exchange: "",
   ethereum: "ethereum",
   polygon: "matic-network",
   arbitrum: "ethereum",
@@ -265,6 +268,7 @@ export const COINGECKO_NATIVE_ID: Record<ChainId, string> = {
 export const NATIVE_SYMBOL: Record<ChainId, string> = {
   bitcoin: "BTC",
   solana: "SOL",
+  exchange: "",
   ethereum: "ETH",
   polygon: "MATIC",
   arbitrum: "ETH",
@@ -297,6 +301,7 @@ export const NATIVE_SYMBOL: Record<ChainId, string> = {
 export const NATIVE_DECIMALS: Record<ChainId, number> = {
   bitcoin: 8,
   solana: 9,
+  exchange: 0,
   ethereum: 18,
   polygon: 18,
   arbitrum: 18,

@@ -10,6 +10,7 @@ import { TransactionsTable } from "./TransactionsTable";
 import { DownloadCsvButton } from "./DownloadCsvButton";
 import { NftSection, type NftRow } from "./NftSection";
 import { Tabs } from "./Tabs";
+import { WalletNetworkBreakdown } from "./WalletNetworkBreakdown";
 import { CHAIN_LABEL, type ChainId, type ChainType } from "@/lib/chains/types";
 import type { Transaction } from "@/lib/chains/transactions/types";
 import type { WalletHoldings } from "@/lib/chains/types";
@@ -284,29 +285,39 @@ export function WalletDetailView({
       />
 
       {activeTab === "holdings" && (
-        <section className="animate-fade-up">
-          <div className="flex flex-wrap items-end justify-between gap-3 mb-3">
-            <h3 className="text-lg font-bold text-text">Holdings in this wallet</h3>
-            {excluded.size > 0 && (
-              <p className="text-xs text-text-muted">{excluded.size} excluded</p>
-            )}
-          </div>
-          <HoldingsTable
+        <section className="animate-fade-up space-y-4">
+          <WalletNetworkBreakdown
             rows={rows}
             btcPriceUsd={btcPrice}
-            selectable={{
-              getKey: rowKey,
-              checked: new Set(includedRows.map(rowKey)),
-              onToggle: toggleExcluded,
-            }}
+            excluded={excluded}
+            toggleExcluded={toggleExcluded}
+            rowKey={rowKey}
           />
-          {excluded.size > 0 && (
-            <p className="mt-2 text-xs text-text-muted">
-              Total above excludes {excluded.size}{" "}
-              {excluded.size === 1 ? "holding" : "holdings"} (
-              {excludedTotal > 0 ? `$${excludedTotal.toFixed(2)}` : "no value"})
-            </p>
-          )}
+
+          <div>
+            <div className="flex flex-wrap items-end justify-between gap-3 mb-3">
+              <h3 className="text-lg font-bold text-text">Holdings in this wallet</h3>
+              {excluded.size > 0 && (
+                <p className="text-xs text-text-muted">{excluded.size} excluded</p>
+              )}
+            </div>
+            <HoldingsTable
+              rows={rows}
+              btcPriceUsd={btcPrice}
+              selectable={{
+                getKey: rowKey,
+                checked: new Set(includedRows.map(rowKey)),
+                onToggle: toggleExcluded,
+              }}
+            />
+            {excluded.size > 0 && (
+              <p className="mt-2 text-xs text-text-muted">
+                Total above excludes {excluded.size}{" "}
+                {excluded.size === 1 ? "holding" : "holdings"} (
+                {excludedTotal > 0 ? `$${excludedTotal.toFixed(2)}` : "no value"})
+              </p>
+            )}
+          </div>
         </section>
       )}
 

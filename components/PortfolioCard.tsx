@@ -45,6 +45,24 @@ export function PortfolioCard({
       .eq("id", portfolio.id);
     router.refresh();
   }
+  async function remove(e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    const w = portfolio.walletCount;
+    const first = confirm(
+      `Delete portfolio "${portfolio.name}"?\n\n` +
+        `This will also delete ${w} ${w === 1 ? "wallet" : "wallets"} and all of their cached holdings & NFTs.\n\n` +
+        `This cannot be undone.`,
+    );
+    if (!first) return;
+    const second = confirm(`Are you sure? Type-confirm not required — last chance.`);
+    if (!second) return;
+    await supabaseBrowser()
+      .from("crypto_portfolios")
+      .delete()
+      .eq("id", portfolio.id);
+    router.refresh();
+  }
   const wiggleClass = editing
     ? wiggleVariant === "b"
       ? "animate-wiggle-b"
@@ -139,6 +157,18 @@ export function PortfolioCard({
           <span className="text-primary group-hover:text-primary-hover">Open →</span>
         </div>
       </Link>
+      {editing && (
+        <div className="mt-3 flex justify-end">
+          <button
+            type="button"
+            onClick={remove}
+            className="text-xs text-text-muted hover:text-danger"
+            title="Delete portfolio + all its wallets"
+          >
+            🗑 Delete portfolio
+          </button>
+        </div>
+      )}
     </div>
   );
 }

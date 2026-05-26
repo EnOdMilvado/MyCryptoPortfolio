@@ -96,6 +96,41 @@ export async function getTokenPrices(
   return out;
 }
 
+/**
+ * Resolve USD prices by ticker symbol (e.g. SUI, ENJ, MANTRA) via CoinGecko's
+ * /coins/markets endpoint. Returns map: UPPERCASED symbol → USD price.
+ *
+ * Ambiguous symbols (multiple coins share a ticker) are resolved by picking
+ * the highest market-cap match. Caps batch size to keep URL under length
+ * limits on the free tier.
+ */
+export async function getCoinGeckoPricesBySymbol(
+  symbols: string[],
+): Promise<PriceMap> {
+  if (symbols.length === 0) return {};
+  const unique = Array.from(
+    new Set(symbols.map((s) => s.toLowerCase()).filter(Boolean)),
+  );
+  const out: PriceMap = {};
+  for (let i = 0; i < unique.length; i += 50) {
+    const chunk = unique.slice(i, i + 50);
+    const url = `${CG_BASE}/coins/markets?vs_currency=usd&symbols=${chunk.join(",")}&order=market_cap_desc&per_page=250&page=1&sparkline=false`;
+    const json = await cgFetch<
+      { symbol: string; current_price: number | null; market_cap: number | null }[]
+    >(url);
+    if (!json) continue;
+    // For collisions (same symbol → multiple coins), keep the one with the
+    // highest market cap (first entry due to order=market_cap_desc).
+    for (const row of json) {
+      const sym = (row.symbol ?? "").toUpperCase();
+      if (!sym || out[sym] != null) continue;
+      const p = row.current_price;
+      if (typeof p === "number" && p > 0 && p < 1_000_000) out[sym] = p;
+    }
+  }
+  return out;
+}
+
 /** Same as getTokenPrices but also returns 24h % change per contract. */
 export async function getTokenPricesWithChange(
   platform: EvmChain | "solana",

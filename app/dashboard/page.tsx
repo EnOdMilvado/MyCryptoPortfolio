@@ -109,30 +109,75 @@ export default async function DashboardPage() {
     return { id: p.id, name: p.name, walletIds };
   });
 
-  // Load exchanges + off-chain balances
-  const { data: exRows } = await supabase
+  // Load exchanges + off-chain balances. Pull amount + price_usd too so we
+  // can both feed ExchangesAndOffchain totals AND synthesise HoldingRows
+  // that merge with wallet holdings in the main tables.
+  const { data: exRowsFull } = await supabase
     .from("crypto_exchanges")
-    .select("id, provider, label, last_synced_at, crypto_exchange_balances_cache ( asset, value_usd )")
+    .select(
+      "id, provider, label, last_synced_at, crypto_exchange_balances_cache ( asset, amount, price_usd, value_usd )",
+    )
     .order("created_at", { ascending: true });
 
-  const exchanges: ExchangeRow[] = (exRows ?? []).map((ex: {
+  interface RawExBalance {
+    asset: string;
+    amount: number | string | null;
+    price_usd: number | string | null;
+    value_usd: number | string | null;
+  }
+  interface RawExchange {
     id: string;
     provider: string;
     label: string;
     last_synced_at: string | null;
-    crypto_exchange_balances_cache: { asset: string; value_usd: number | null }[] | null;
-  }) => {
-    const balances = ex.crypto_exchange_balances_cache ?? [];
-    const totalUsd = balances.reduce((s, b) => s + Number(b.value_usd ?? 0), 0);
-    return {
-      id: ex.id,
-      provider: ex.provider,
-      label: ex.label,
-      totalUsd,
-      lastSyncedAt: ex.last_synced_at,
-      balanceCount: balances.length,
-    };
-  });
+    crypto_exchange_balances_cache: RawExBalance[] | null;
+  }
+
+  const exchanges: ExchangeRow[] = ((exRowsFull as RawExchange[] | null) ?? []).map(
+    (ex) => {
+      const balances = (ex.crypto_exchange_balances_cache ?? []).map((b) => ({
+        asset: b.asset,
+        valueUsd: Number(b.value_usd ?? 0),
+      }));
+      const totalUsd = balances.reduce((s, b) => s + b.valueUsd, 0);
+      return {
+        id: ex.id,
+        provider: ex.provider,
+        label: ex.label,
+        totalUsd,
+        lastSyncedAt: ex.last_synced_at,
+        balanceCount: balances.length,
+        balances,
+      };
+    },
+  );
+
+  // Synthesise HoldingRows for exchange spot balances so they aggregate
+  // alongside wallet holdings in the main tables.
+  for (const ex of (exRowsFull as RawExchange[] | null) ?? []) {
+    for (const b of ex.crypto_exchange_balances_cache ?? []) {
+      const amount = Number(b.amount ?? 0);
+      if (!Number.isFinite(amount) || amount <= 0) continue;
+      const priceUsd = b.price_usd == null ? null : Number(b.price_usd);
+      const valueUsd = b.value_usd == null ? 0 : Number(b.value_usd);
+      allHoldings.push({
+        walletId: `exchange:${ex.id}`,
+        walletName: ex.label,
+        walletAddress: "",
+        portfolioId: undefined,
+        portfolioName: ex.provider.toUpperCase(),
+        chain: "exchange" as ChainId,
+        contract: `${ex.id}:${b.asset.toUpperCase()}`,
+        symbol: b.asset,
+        name: b.asset,
+        amount,
+        priceUsd,
+        valueUsd,
+        priceChange24h: null,
+        exchangeId: ex.id,
+      });
+    }
+  }
 
   const { data: ocRows } = await supabase
     .from("crypto_offchain_balances")

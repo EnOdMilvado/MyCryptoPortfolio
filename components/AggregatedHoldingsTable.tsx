@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { CHAIN_LABEL } from "@/lib/chains/types";
 import { formatAmount, formatBtc, shortenAddress } from "@/lib/format";
 import { isLikelySpam } from "@/lib/spam";
@@ -425,9 +425,8 @@ export function AggregatedHoldingsTable({
               const isChecked = !excluded.has(r.key);
               const isExpanded = expanded.has(r.key);
               return (
-                <>
+                <Fragment key={r.key}>
                   <tr
-                    key={r.key}
                     // Stable id so external focus requests (pie / bar click)
                     // can scrollIntoView this specific row.
                     id={`agg-row-${r.key}`}
@@ -626,7 +625,7 @@ export function AggregatedHoldingsTable({
                       </td>
                     </tr>
                   )}
-                </>
+                </Fragment>
               );
             })}
             {sorted.length === 0 && (

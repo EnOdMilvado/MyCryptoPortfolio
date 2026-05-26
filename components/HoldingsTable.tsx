@@ -26,6 +26,10 @@ export interface HoldingRow {
   valueUsd: number;
   /** 24h price change in percent (e.g. -3.2 = -3.2%). */
   priceChange24h?: number | null;
+  /** When set, this is a synthetic row sourced from an exchange spot balance
+   *  rather than an on-chain wallet. Used to apply per-exchange asset
+   *  excludes from localStorage. */
+  exchangeId?: string;
 }
 
 type SortKey =

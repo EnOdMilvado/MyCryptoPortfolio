@@ -13,7 +13,8 @@ const PROVIDERS = [
   { id: "bybit", label: "Bybit", working: false },
   { id: "okx", label: "OKX", working: false },
   { id: "gate", label: "Gate.io", working: false },
-  { id: "mexc", label: "MEXC", working: false },
+  { id: "mexc", label: "MEXC", working: true },
+  { id: "htx", label: "HTX (Huobi)", working: true },
   { id: "other", label: "Other", working: false },
 ] as const;
 
