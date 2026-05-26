@@ -190,13 +190,14 @@ function NetworkHoldingsTable({
       <table className="w-full text-sm tabular">
         <thead className="bg-surface-2/60 text-text-muted">
           <tr>
-            <th className="px-2 py-2 w-10 text-center">On</th>
+            <th className="px-2 py-2 w-10 text-left">On</th>
             <th className="px-3 py-2 text-left">Token</th>
-            <th className="px-3 py-2 text-right">Amount</th>
-            <th className="px-3 py-2 text-right">Value</th>
-            <th className="px-3 py-2 text-right">≈ BTC</th>
-            <th className="px-3 py-2 text-right">24h</th>
-            <th className="px-3 py-2 text-right">Buy</th>
+            <th className="px-3 py-2 text-left">Price</th>
+            <th className="px-3 py-2 text-left">24h</th>
+            <th className="px-3 py-2 text-left">Amount</th>
+            <th className="px-3 py-2 text-left">Value</th>
+            <th className="px-3 py-2 text-left">≈ BTC</th>
+            <th className="px-3 py-2 text-left">Buy</th>
             <th className="px-3 py-2 text-left">Address</th>
             <th className="px-3 py-2 text-left">Holders</th>
             <th className="px-2 py-2 w-8" aria-label="External" />
@@ -220,7 +221,7 @@ function NetworkHoldingsTable({
                   isOn ? "" : "opacity-40"
                 }`}
               >
-                <td className="px-2 py-2 text-center">
+                <td className="px-2 py-2 text-left">
                   <input
                     type="checkbox"
                     checked={isOn}
@@ -230,7 +231,7 @@ function NetworkHoldingsTable({
                   />
                 </td>
                 <td
-                  className={`px-3 py-2 ${isOn ? "" : "line-through"} min-w-[12rem]`}
+                  className={`px-3 py-2 ${isOn ? "" : "line-through"} min-w-[10rem]`}
                 >
                   <div className="font-semibold text-text truncate">
                     {r.symbol ?? r.name ?? "—"}
@@ -241,20 +242,12 @@ function NetworkHoldingsTable({
                     </div>
                   )}
                 </td>
-                <td className={`px-3 py-2 text-right ${isOn ? "" : "line-through"}`}>
-                  {formatAmount(r.amount)}
+                {/* Price (market) */}
+                <td className="px-3 py-2 text-left text-text-muted whitespace-nowrap">
+                  {r.priceUsd == null ? "—" : <UsdValue value={r.priceUsd} priceUsd={r.priceUsd} />}
                 </td>
-                <td
-                  className={`px-3 py-2 text-right font-semibold ${
-                    isOn ? "" : "line-through"
-                  }`}
-                >
-                  <UsdValue value={r.valueUsd} priceUsd={r.priceUsd} />
-                </td>
-                <td className="px-3 py-2 text-right text-text-muted">
-                  {btcEq != null ? <BtcValue value={btcEq} /> : "—"}
-                </td>
-                <td className="px-3 py-2 text-right">
+                {/* 24h */}
+                <td className="px-3 py-2 text-left">
                   {r.priceChange24h == null ? (
                     <span className="text-text-muted">—</span>
                   ) : (
@@ -268,7 +261,24 @@ function NetworkHoldingsTable({
                     </span>
                   )}
                 </td>
-                <td className="px-3 py-2 text-right text-text-muted">—</td>
+                {/* Amount */}
+                <td className={`px-3 py-2 text-left ${isOn ? "" : "line-through"}`}>
+                  {formatAmount(r.amount)}
+                </td>
+                {/* Value */}
+                <td
+                  className={`px-3 py-2 text-left font-semibold ${
+                    isOn ? "" : "line-through"
+                  }`}
+                >
+                  <UsdValue value={r.valueUsd} priceUsd={r.priceUsd} />
+                </td>
+                {/* BTC */}
+                <td className="px-3 py-2 text-left text-text-muted">
+                  {btcEq != null ? <BtcValue value={btcEq} /> : "—"}
+                </td>
+                {/* Buy */}
+                <td className="px-3 py-2 text-left text-text-muted">—</td>
                 <td className="px-3 py-2 text-left">
                   {isNative ? (
                     <span className="text-xs text-text-muted">native</span>

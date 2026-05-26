@@ -2,6 +2,9 @@
 
 import { useMemo } from "react";
 import { useHideBalance } from "./HideBalanceProvider";
+import { useAllHoldings } from "./AllHoldingsView";
+import { resolveCoinColor, CHART_COLORS, OTHER_COLOR } from "./PieChart";
+import { useTheme } from "./ThemeProvider";
 import { formatUsd } from "@/lib/format";
 
 export interface Snapshot {
@@ -15,11 +18,12 @@ interface Period {
   ms: number;
 }
 
+// 1Y is replaced by the allocation donut card below — keep only the trio
+// of period-based changes here.
 const PERIODS: Period[] = [
   { key: "24h", label: "24h", ms: 24 * 60 * 60 * 1000 },
   { key: "30d", label: "30d", ms: 30 * 24 * 60 * 60 * 1000 },
   { key: "3m", label: "3m", ms: 90 * 24 * 60 * 60 * 1000 },
-  { key: "1y", label: "1y", ms: 365 * 24 * 60 * 60 * 1000 },
 ];
 
 export function ChangeCards({ snapshots }: { snapshots: Snapshot[] }) {
@@ -111,7 +115,167 @@ export function ChangeCards({ snapshots }: { snapshots: Snapshot[] }) {
           </div>
         );
       })}
+
+      <AllocationDonutCard />
     </section>
+  );
+}
+
+/**
+ * Compact "allocation" card sitting where the 1Y card used to live. Shows a
+ * mini donut chart of the user's top assets by USD value, with a tiny
+ * legend underneath. Reads holdings from AllHoldingsProvider context so it
+ * stays in sync with checkbox excludes / network filter.
+ */
+function AllocationDonutCard() {
+  const { hidden } = useHideBalance();
+  const { dark } = useTheme();
+  const { includedRows } = useAllHoldings();
+
+  const slices = useMemo(() => {
+    const map = new Map<
+      string,
+      { label: string; symbol: string | null; value: number }
+    >();
+    for (const r of includedRows) {
+      if (r.valueUsd <= 0) continue;
+      const k = (r.symbol ?? r.name ?? r.contract).toUpperCase();
+      const cur = map.get(k);
+      if (cur) cur.value += r.valueUsd;
+      else
+        map.set(k, {
+          label: (r.symbol ?? r.name ?? k).trim(),
+          symbol: r.symbol,
+          value: r.valueUsd,
+        });
+    }
+    const sorted = [...map.entries()].sort((a, b) => b[1].value - a[1].value);
+    const top = sorted.slice(0, 5);
+    const rest = sorted.slice(5);
+    const used = new Set<number>();
+    const out = top.map(([, info], i) => {
+      const brand = resolveCoinColor(
+        (info.symbol ?? info.label).toUpperCase(),
+        dark,
+      );
+      let color: string;
+      if (brand) color = brand;
+      else {
+        let idx = i % CHART_COLORS.length;
+        while (used.has(idx) && used.size < CHART_COLORS.length) {
+          idx = (idx + 1) % CHART_COLORS.length;
+        }
+        used.add(idx);
+        color = CHART_COLORS[idx];
+      }
+      return { label: info.label, value: info.value, color };
+    });
+    if (rest.length > 0) {
+      const otherValue = rest.reduce((s, [, info]) => s + info.value, 0);
+      out.push({ label: "Other", value: otherValue, color: OTHER_COLOR });
+    }
+    return out;
+  }, [includedRows, dark]);
+
+  const total = slices.reduce((s, x) => s + x.value, 0);
+
+  return (
+    <div className="card-tight space-y-2">
+      <div className="flex items-baseline justify-between">
+        <span className="text-xs font-bold text-text-muted uppercase tracking-wide">
+          Allocation
+        </span>
+        <span className="text-xs text-text-muted">
+          {slices.length === 0
+            ? "—"
+            : `${slices.length} ${slices.length === 1 ? "asset" : "assets"}`}
+        </span>
+      </div>
+      {total > 0 ? (
+        <div className="flex items-center gap-3">
+          <MiniDonut slices={slices} total={total} size={56} />
+          <div className="flex-1 min-w-0 space-y-0.5">
+            {slices.slice(0, 4).map((s) => {
+              const pct = (s.value / total) * 100;
+              return (
+                <div
+                  key={s.label}
+                  className="flex items-center gap-1.5 text-[10px] leading-tight"
+                >
+                  <span
+                    aria-hidden
+                    className="h-2 w-2 rounded-sm shrink-0"
+                    style={{ backgroundColor: s.color }}
+                  />
+                  <span className="font-semibold text-text truncate">
+                    {s.label}
+                  </span>
+                  <span className="ml-auto text-text-muted tabular shrink-0">
+                    {pct.toFixed(1)}%
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        <div className="text-xs text-text-muted py-4 text-center">
+          {hidden ? "••••" : "No data yet"}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MiniDonut({
+  slices,
+  total,
+  size,
+}: {
+  slices: { label: string; value: number; color: string }[];
+  total: number;
+  size: number;
+}) {
+  const cx = size / 2;
+  const cy = size / 2;
+  const r = size / 2 - 1;
+  const innerR = r * 0.55;
+  const positive = slices.filter((s) => s.value > 0);
+  if (positive.length === 0 || total <= 0) return null;
+  if (positive.length === 1) {
+    return (
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        <circle cx={cx} cy={cy} r={r} fill={positive[0].color} />
+        <circle cx={cx} cy={cy} r={innerR} fill="rgb(var(--surface))" />
+      </svg>
+    );
+  }
+  let cum = 0;
+  const paths = positive.map((s) => {
+    const start = (cum / total) * Math.PI * 2;
+    cum += s.value;
+    const end = (cum / total) * Math.PI * 2;
+    const sp = { x: cx + r * Math.sin(start), y: cy - r * Math.cos(start) };
+    const ep = { x: cx + r * Math.sin(end), y: cy - r * Math.cos(end) };
+    const large = end - start > Math.PI ? 1 : 0;
+    return {
+      color: s.color,
+      d: `M ${cx},${cy} L ${sp.x.toFixed(2)},${sp.y.toFixed(2)} A ${r},${r} 0 ${large} 1 ${ep.x.toFixed(2)},${ep.y.toFixed(2)} Z`,
+    };
+  });
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0">
+      {paths.map((p, i) => (
+        <path
+          key={i}
+          d={p.d}
+          fill={p.color}
+          stroke="rgb(var(--surface))"
+          strokeWidth="1"
+        />
+      ))}
+      <circle cx={cx} cy={cy} r={innerR} fill="rgb(var(--surface))" />
+    </svg>
   );
 }
 

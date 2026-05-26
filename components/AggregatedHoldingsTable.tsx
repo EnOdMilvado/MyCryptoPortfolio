@@ -5,7 +5,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { CmcLink } from "./CmcLink";
 import { CHAIN_LABEL } from "@/lib/chains/types";
 import { tokenExplorerUrl } from "@/lib/chains/explorers";
-import { formatAmount, formatBtc, shortenAddress } from "@/lib/format";
+import { formatAmount, formatBtc, formatUsd, shortenAddress } from "@/lib/format";
 import { isLikelySpam } from "@/lib/spam";
 import { useAllHoldings } from "./AllHoldingsView";
 import { ChainPill } from "./ChainPill";
@@ -344,11 +344,12 @@ export function AggregatedHoldingsTable({
           <colgroup>
             <col className="w-[14%] sm:w-[5%]" />
             <col
-              className={`w-[56%] ${showBtc ? "sm:w-[28%]" : "sm:w-[32%]"}`}
+              className={`w-[56%] ${showBtc ? "sm:w-[22%]" : "sm:w-[26%]"}`}
             />
-            <col className="hidden sm:table-column sm:w-[15%]" />
             <col className="hidden sm:table-column sm:w-[11%]" />
-            <col className="hidden sm:table-column sm:w-[11%]" />
+            <col className="hidden sm:table-column sm:w-[12%]" />
+            <col className="hidden sm:table-column sm:w-[10%]" />
+            <col className="hidden sm:table-column sm:w-[10%]" />
             <col
               className={`w-[30%] ${showBtc ? "sm:w-[15%]" : "sm:w-[20%]"}`}
             />
@@ -369,16 +370,12 @@ export function AggregatedHoldingsTable({
                   onClick={() => toggleSort("symbol")}
                 />
               </th>
-              <th className="hidden sm:table-cell px-2 py-2.5 text-right">
-                <SortHeader
-                  label="Amount"
-                  active={sortKey === "totalAmount"}
-                  dir={sortDir}
-                  onClick={() => toggleSort("totalAmount")}
-                  align="end"
-                />
+              <th className="hidden sm:table-cell px-2 py-2.5 text-left">
+                <span className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+                  Price
+                </span>
               </th>
-              <th className="hidden sm:table-cell px-2 py-2.5 text-right">
+              <th className="hidden sm:table-cell px-2 py-2.5 text-left">
                 <SortHeader
                   label="24h"
                   active={sortKey === "change24h"}
@@ -387,7 +384,16 @@ export function AggregatedHoldingsTable({
                   align="end"
                 />
               </th>
-              <th className="hidden sm:table-cell px-2 py-2.5 text-right">
+              <th className="hidden sm:table-cell px-2 py-2.5 text-left">
+                <SortHeader
+                  label="Amount"
+                  active={sortKey === "totalAmount"}
+                  dir={sortDir}
+                  onClick={() => toggleSort("totalAmount")}
+                  align="end"
+                />
+              </th>
+              <th className="hidden sm:table-cell px-2 py-2.5 text-left">
                 <SortHeader
                   label="Wallets"
                   active={sortKey === "walletCount"}
@@ -397,7 +403,7 @@ export function AggregatedHoldingsTable({
                 />
               </th>
               <th
-                className={`px-2 py-2.5 text-right ${showBtc ? "" : "pr-3"}`}
+                className={`px-2 py-2.5 text-left ${showBtc ? "" : "pr-3"}`}
               >
                 <SortHeader
                   label="USD"
@@ -408,7 +414,7 @@ export function AggregatedHoldingsTable({
                 />
               </th>
               {showBtc && (
-                <th className="hidden sm:table-cell px-2 py-2.5 text-right pr-3">
+                <th className="hidden sm:table-cell px-2 py-2.5 text-left pr-3">
                   <SortHeader
                     label="BTC"
                     // BTC value is proportional to USD value, so the sort
@@ -420,7 +426,9 @@ export function AggregatedHoldingsTable({
                   />
                 </th>
               )}
-              <th className="px-2 py-2.5 w-8 pr-2" aria-label="External" />
+              <th className="px-2 py-2.5 w-12 pr-2 text-left text-xs font-semibold uppercase tracking-wide text-text-muted">
+                CMC
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -486,10 +494,13 @@ export function AggregatedHoldingsTable({
                         </span>
                       </button>
                     </td>
-                    <td className="hidden sm:table-cell px-2 py-2.5 align-middle text-right tabular text-sm whitespace-nowrap">
-                      {formatAmount(r.totalAmount)}
+                    {/* Price (market) — picked from the largest-USD
+                        contributor's priceUsd. */}
+                    <td className="hidden sm:table-cell px-2 py-2.5 align-middle text-left tabular text-sm whitespace-nowrap text-text-muted">
+                      <AggPriceCell contributors={r.contributors} />
                     </td>
-                    <td className="hidden sm:table-cell px-2 py-2.5 align-middle text-right tabular text-sm whitespace-nowrap">
+                    {/* 24h */}
+                    <td className="hidden sm:table-cell px-2 py-2.5 align-middle text-left tabular text-sm whitespace-nowrap">
                       {r.change24h == null ? (
                         <span className="text-text-muted">—</span>
                       ) : (
@@ -503,7 +514,11 @@ export function AggregatedHoldingsTable({
                         </span>
                       )}
                     </td>
-                    <td className="hidden sm:table-cell px-2 py-2.5 align-middle text-right">
+                    {/* Amount */}
+                    <td className="hidden sm:table-cell px-2 py-2.5 align-middle text-left tabular text-sm whitespace-nowrap">
+                      {formatAmount(r.totalAmount)}
+                    </td>
+                    <td className="hidden sm:table-cell px-2 py-2.5 align-middle text-left">
                       <button
                         type="button"
                         onClick={() => toggleExpanded(r.key)}
@@ -522,7 +537,7 @@ export function AggregatedHoldingsTable({
                       </button>
                     </td>
                     <td
-                      className={`px-2 py-2.5 align-middle text-right whitespace-nowrap ${
+                      className={`px-2 py-2.5 align-middle text-left whitespace-nowrap ${
                         showBtc ? "" : "pr-3"
                       }`}
                     >
@@ -533,7 +548,7 @@ export function AggregatedHoldingsTable({
                       />
                     </td>
                     {showBtc && (
-                      <td className="hidden sm:table-cell px-2 py-2.5 align-middle text-right whitespace-nowrap pr-3">
+                      <td className="hidden sm:table-cell px-2 py-2.5 align-middle text-left whitespace-nowrap pr-3">
                         <AggBtcCell
                           totalUsd={r.totalUsd}
                           hasPrice={r.hasPrice}
@@ -547,7 +562,7 @@ export function AggregatedHoldingsTable({
                   </tr>
                   {isExpanded && (
                     <tr key={`${r.key}-expand`} className="bg-surface-2/40">
-                      <td colSpan={showBtc ? 8 : 7} className="px-4 py-3">
+                      <td colSpan={showBtc ? 9 : 8} className="px-4 py-3">
                         <div className="text-xs text-text-muted mb-2">
                           {r.contributors.length}{" "}
                           {r.contributors.length === 1 ? "holding" : "holdings"} on{" "}
@@ -618,14 +633,14 @@ export function AggregatedHoldingsTable({
                                 </span>
                                 <span
                                   role="cell"
-                                  className="text-text-muted tabular text-right whitespace-nowrap"
+                                  className="text-text-muted tabular text-left whitespace-nowrap"
                                 >
                                   {formatAmount(h.amount)}
                                 </span>
                                 <UsdValue
                                   value={h.valueUsd}
                                   priceUsd={h.priceUsd}
-                                  className="font-semibold tabular text-right min-w-[5rem] whitespace-nowrap"
+                                  className="font-semibold tabular text-left min-w-[5rem] whitespace-nowrap"
                                 />
                               </div>
                             ))}
@@ -639,7 +654,7 @@ export function AggregatedHoldingsTable({
             {sorted.length === 0 && (
               <tr>
                 <td
-                  colSpan={showBtc ? 8 : 7}
+                  colSpan={showBtc ? 9 : 8}
                   className="px-3 py-6 text-center text-text-muted"
                 >
                   No assets match the current filter
@@ -708,6 +723,19 @@ function AggAddressLink({ contributors }: { contributors: HoldingRow[] }) {
       {short} ↗
     </a>
   );
+}
+
+/** Market price cell — picks the largest-USD contributor's priceUsd. */
+function AggPriceCell({ contributors }: { contributors: HoldingRow[] }) {
+  let top = contributors[0];
+  if (!top) return <span className="text-text-muted">—</span>;
+  for (const c of contributors) {
+    if (c.valueUsd > top.valueUsd) top = c;
+  }
+  const p = top.priceUsd;
+  if (p == null) return <span className="text-text-muted">—</span>;
+  // Reuse formatUsd's "<$0.01" for super-small prices.
+  return <>{formatUsd(p)}</>;
 }
 
 /** BTC cell for the aggregated table — respects the global hide toggle. */

@@ -23,6 +23,11 @@ export interface PieSlice {
   primaryChain?: import("@/lib/chains/types").ChainId;
   /** Contract address on `primaryChain` for the same contributor. */
   primaryContract?: string;
+  /** Number of distinct wallets holding this asset (for the legend col). */
+  walletCount?: number;
+  /** Latest market price per unit (USD). Pulled from our existing price
+   *  resolvers — CoinGecko / Alchemy / MEXC ticker — at refresh time. */
+  priceUsd?: number | null;
 }
 
 /** Vivid palette that works on both light and dark themes. */
@@ -128,6 +133,7 @@ export function PieChart({
   coinsCount,
   btcPriceUsd,
   onSliceClick,
+  mode = "full",
 }: {
   slices: PieSlice[];
   totalLabel?: string;
@@ -140,6 +146,10 @@ export function PieChart({
   /** When provided, slice + legend rows become clickable. The handler
    *  receives the slice.key (skipped for slices without a key). */
   onSliceClick?: (key: string) => void;
+  /** Layout mode: "full" = pie + table side-by-side, "table" = only the
+   *  structured table, "pie" = only the donut centered with a compact
+   *  legend below it. */
+  mode?: "full" | "table" | "pie";
 }) {
   const { hidden } = useHideBalance();
   const total = slices.reduce((s, x) => s + x.value, 0);
@@ -182,9 +192,157 @@ export function PieChart({
     });
   })();
 
+  const showBtc = btcPriceUsd != null && btcPriceUsd > 0;
+
   return (
-    <div className="flex flex-col md:flex-row items-center gap-8">
-      <div className="relative shrink-0">
+    <div
+      className={`flex ${
+        mode === "pie"
+          ? "justify-center items-center"
+          : "flex-col lg:flex-row items-center gap-6"
+      }`}
+    >
+      {/* Table — only when mode is "full" or "table" */}
+      {mode !== "pie" && (
+      <div className="flex-1 w-full overflow-x-auto">
+        <table className="w-full text-sm tabular border-collapse">
+          <thead className="text-[11px] uppercase tracking-wide font-semibold text-text-muted">
+            <tr className="border-b border-border">
+              <th className="text-left font-semibold px-2 py-2">Asset</th>
+              <th className="text-left font-semibold px-2 py-2 whitespace-nowrap">Price</th>
+              <th className="text-left font-semibold px-2 py-2 whitespace-nowrap">24h</th>
+              <th className="text-left font-semibold px-2 py-2 whitespace-nowrap">Amount</th>
+              <th className="text-left font-semibold px-2 py-2 whitespace-nowrap">USD</th>
+              {showBtc && (
+                <th className="text-left font-semibold px-2 py-2 whitespace-nowrap">BTC</th>
+              )}
+              <th className="text-left font-semibold px-2 py-2 whitespace-nowrap">%</th>
+              <th className="text-left font-semibold px-2 py-2 whitespace-nowrap">Wallets</th>
+              <th className="text-left font-semibold px-2 py-2 whitespace-nowrap">Address</th>
+              <th className="text-left font-semibold px-2 py-2">CMC</th>
+            </tr>
+          </thead>
+          <tbody>
+            {slices.map((s, i) => {
+              const pct = total > 0 ? (s.value / total) * 100 : 0;
+              const btcEquiv = showBtc ? s.value / (btcPriceUsd as number) : null;
+              const explorerUrl =
+                s.primaryChain && s.primaryContract
+                  ? tokenExplorerUrl(s.primaryChain, s.primaryContract)
+                  : null;
+              const clickable = onSliceClick && s.key;
+              return (
+                <tr
+                  key={`${s.label}-${i}`}
+                  className={`border-b border-border/40 last:border-b-0 ${
+                    clickable ? "cursor-pointer hover:bg-surface-2/60 transition" : ""
+                  }`}
+                  onClick={clickable ? () => onSliceClick!(s.key!) : undefined}
+                  title={clickable ? `Click to see wallets holding ${s.label}` : undefined}
+                >
+                  {/* Asset */}
+                  <td className="px-2 py-2 min-w-0">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span
+                        aria-hidden
+                        className="h-3 w-3 rounded-sm shrink-0"
+                        style={{ backgroundColor: s.color }}
+                      />
+                      <span className="font-semibold text-text truncate">
+                        {s.label}
+                      </span>
+                    </div>
+                  </td>
+                  {/* Price (market) */}
+                  <td className="px-2 py-2 text-left text-text-muted whitespace-nowrap">
+                    {s.priceUsd == null ? (
+                      <span className="text-text-muted">—</span>
+                    ) : (
+                      formatUsd(s.priceUsd)
+                    )}
+                  </td>
+                  {/* 24h */}
+                  <td className="px-2 py-2 text-left whitespace-nowrap font-semibold">
+                    {s.change24h == null ? (
+                      <span className="text-text-muted">—</span>
+                    ) : (
+                      <span
+                        className={
+                          s.change24h >= 0 ? "text-success" : "text-danger"
+                        }
+                      >
+                        {s.change24h >= 0 ? "+" : ""}
+                        {s.change24h.toFixed(2)}%
+                      </span>
+                    )}
+                  </td>
+                  {/* Amount */}
+                  <td className="px-2 py-2 text-left text-text-muted whitespace-nowrap">
+                    {s.amount != null && s.amountSymbol ? (
+                      <>
+                        {formatAmount(s.amount)}{" "}
+                        <span className="opacity-60">{s.amountSymbol}</span>
+                      </>
+                    ) : (
+                      <span className="opacity-60">{s.sub ?? "—"}</span>
+                    )}
+                  </td>
+                  {/* USD */}
+                  <td className="px-2 py-2 text-left font-semibold text-text whitespace-nowrap">
+                    {hidden ? "••••" : formatUsd(s.value)}
+                  </td>
+                  {/* BTC */}
+                  {showBtc && (
+                    <td className="px-2 py-2 text-left text-text-muted whitespace-nowrap">
+                      {btcEquiv != null
+                        ? hidden
+                          ? "••••"
+                          : formatBtc(btcEquiv)
+                        : "—"}
+                    </td>
+                  )}
+                  {/* % */}
+                  <td className="px-2 py-2 text-left text-text-muted text-xs">
+                    {pct.toFixed(1)}%
+                  </td>
+                  {/* Wallets */}
+                  <td className="px-2 py-2 text-left text-text-muted text-xs">
+                    {s.walletCount ?? "—"}
+                  </td>
+                  {/* Address (explorer link) */}
+                  <td className="px-2 py-2 text-left">
+                    {explorerUrl && s.primaryContract ? (
+                      <a
+                        href={explorerUrl}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        onClick={(e) => e.stopPropagation()}
+                        className="font-mono text-xs text-primary hover:text-primary-hover"
+                        title={s.primaryContract}
+                      >
+                        {shortenAddress(s.primaryContract, 6, 4)} ↗
+                      </a>
+                    ) : (
+                      <span className="text-xs text-text-muted">—</span>
+                    )}
+                  </td>
+                  {/* CMC link */}
+                  <td className="px-2 py-2 text-left w-8">
+                    {s.key && s.label !== "Other" && (
+                      <CmcLink symbol={s.amountSymbol ?? s.label} />
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      )}
+
+      {/* Pie — only when mode is "full" or "pie" */}
+      {mode !== "table" && (
+      <div className="relative shrink-0 mx-auto lg:mx-0">
         <svg
           width="240"
           height="240"
@@ -227,129 +385,8 @@ export function PieChart({
           )}
         </div>
       </div>
+      )}
 
-      <div className="flex-1 w-full">
-        {/* Column header — replaces the old Include/Exclude buttons.
-            Labels the numeric columns underneath so the legend reads like
-            a real table. Headers + cell values share the same fixed widths
-            and left-alignment so every column lines up cleanly. */}
-        <div className="flex items-center justify-between gap-2 pb-2 mb-2 border-b border-border text-[11px] uppercase tracking-wide font-semibold text-text-muted">
-          <span className="pl-5">Asset</span>
-          <div className="flex items-center gap-2 sm:gap-4 shrink-0">
-            <span className="text-left w-14 sm:w-16">24h</span>
-            <span className="text-left w-12 sm:w-14">%</span>
-            <span className="text-left w-24 sm:w-28">USD</span>
-            {btcPriceUsd != null && btcPriceUsd > 0 && (
-              <span className="text-left w-24 sm:w-28">BTC</span>
-            )}
-            <span className="w-5 text-center" aria-hidden></span>
-          </div>
-        </div>
-        <ul className="space-y-2.5">
-          {slices.map((s, i) => {
-            const pct = total > 0 ? (s.value / total) * 100 : 0;
-            const btcEquiv =
-              btcPriceUsd != null && btcPriceUsd > 0
-                ? s.value / btcPriceUsd
-                : null;
-            const explorerUrl =
-              s.primaryChain && s.primaryContract
-                ? tokenExplorerUrl(s.primaryChain, s.primaryContract)
-                : null;
-            const hasSecondLine =
-              (s.amount != null && s.amountSymbol) || !!s.sub || !!explorerUrl;
-            const clickable = onSliceClick && s.key;
-            return (
-              <li
-                key={`${s.label}-${i}`}
-                className={`text-sm leading-tight rounded-md -mx-1 px-1 ${
-                  clickable
-                    ? "cursor-pointer hover:bg-surface-2/60 transition"
-                    : ""
-                }`}
-                onClick={
-                  clickable ? () => onSliceClick!(s.key!) : undefined
-                }
-                title={clickable ? `Click to see wallets holding ${s.label}` : undefined}
-              >
-                {/* Line 1: color + label/symbol + 24h + % + USD + (optional) BTC + CMC link */}
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 min-w-0 flex-1">
-                    <span
-                      aria-hidden
-                      className="h-3 w-3 rounded-sm shrink-0"
-                      style={{ backgroundColor: s.color }}
-                    />
-                    <span className="font-semibold text-text truncate">
-                      {s.label}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2 sm:gap-4 shrink-0 tabular">
-                    <span className="text-xs text-left w-14 sm:w-16 font-semibold">
-                      {s.change24h == null ? (
-                        <span className="text-text-muted">—</span>
-                      ) : (
-                        <span
-                          className={
-                            s.change24h >= 0 ? "text-success" : "text-danger"
-                          }
-                        >
-                          {s.change24h >= 0 ? "+" : ""}
-                          {s.change24h.toFixed(2)}%
-                        </span>
-                      )}
-                    </span>
-                    <span className="text-text-muted text-xs text-left w-12 sm:w-14">
-                      {pct.toFixed(1)}%
-                    </span>
-                    <span className="font-semibold text-text text-left w-24 sm:w-28">
-                      {hidden ? "••••" : formatUsd(s.value)}
-                    </span>
-                    {btcEquiv != null && (
-                      <span className="text-text-muted text-left w-24 sm:w-28">
-                        {hidden ? "••••" : formatBtc(btcEquiv)}
-                      </span>
-                    )}
-                    <span className="w-5 flex items-center justify-center">
-                      {s.key && s.label !== "Other" && (
-                        <CmcLink symbol={s.amountSymbol ?? s.label} />
-                      )}
-                    </span>
-                  </div>
-                </div>
-                {/* Line 2: amount + wallets count + token address (link to explorer) */}
-                {hasSecondLine && (
-                  <div className="mt-0.5 pl-5 text-xs text-text-muted flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                    {s.amount != null && s.amountSymbol && (
-                      <span className="tabular">
-                        {formatAmount(s.amount)} {s.amountSymbol}
-                      </span>
-                    )}
-                    {s.sub && (
-                      <span className="text-text-muted/80">{s.sub}</span>
-                    )}
-                    {explorerUrl && s.primaryContract && (
-                      <>
-                        <span className="text-text-muted/50">·</span>
-                        <a
-                          href={explorerUrl}
-                          target="_blank"
-                          rel="noreferrer noopener"
-                          onClick={(e) => e.stopPropagation()}
-                          className="font-mono text-primary hover:text-primary-hover"
-                          title={s.primaryContract}
-                        >
-                          {shortenAddress(s.primaryContract, 6, 4)} ↗
-                        </a>
-                      </>
-                    )}
-                  </div>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      </div>
     </div>
   );
 }

@@ -109,10 +109,39 @@ function buildColumns(btcPriceUsd: number | null | undefined): ColumnDef[] {
       ),
     },
     {
+      key: "price",
+      label: "Price",
+      render: (r) => (
+        <span className="tabular text-sm whitespace-nowrap text-text-muted">
+          {r.priceUsd == null ? (
+            <span className="text-text-muted">—</span>
+          ) : (
+            <UsdValue value={r.priceUsd} priceUsd={r.priceUsd} />
+          )}
+        </span>
+      ),
+    },
+    {
+      key: "change24h",
+      label: "24h",
+      render: (r) =>
+        r.priceChange24h == null ? (
+          <span className="text-text-muted text-sm">—</span>
+        ) : (
+          <span
+            className={`tabular font-semibold text-sm whitespace-nowrap ${
+              r.priceChange24h >= 0 ? "text-success" : "text-danger"
+            }`}
+          >
+            {r.priceChange24h >= 0 ? "+" : ""}
+            {r.priceChange24h.toFixed(2)}%
+          </span>
+        ),
+    },
+    {
       key: "amount",
       label: "Amount",
       numeric: true,
-      align: "end",
       filterValue: (r) => String(r.amount),
       render: (r) => (
         <span className="tabular text-sm whitespace-nowrap">
@@ -124,7 +153,6 @@ function buildColumns(btcPriceUsd: number | null | undefined): ColumnDef[] {
       key: "valueUsd",
       label: "USD value",
       numeric: true,
-      align: "end",
       filterValue: (r) => String(r.valueUsd),
       render: (r) => (
         <UsdValue

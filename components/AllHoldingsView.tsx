@@ -173,16 +173,17 @@ export function AllHoldingsOverview({
     focusAsset,
   } = useAllHoldings();
   const { dark } = useTheme();
-  // Pie vs. bars view — persisted in localStorage so the chart preference
-  // survives reloads. Defaults to pie.
-  const [chartView, setChartView] = useState<"pie" | "bars">("pie");
+  // View selector — Table / Pie / Bars, persisted in localStorage so the
+  // preference survives reloads. Defaults to the structured table.
+  type ChartView = "table" | "pie" | "bars";
+  const [chartView, setChartView] = useState<ChartView>("table");
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem("crypto-chart-view");
-      if (saved === "pie" || saved === "bars") setChartView(saved);
+      if (saved === "table" || saved === "pie" || saved === "bars") setChartView(saved);
     } catch {}
   }, []);
-  function setView(v: "pie" | "bars") {
+  function setView(v: ChartView) {
     setChartView(v);
     try {
       window.localStorage.setItem("crypto-chart-view", v);
@@ -207,10 +208,12 @@ export function AllHoldingsOverview({
       changeWeighted: number;
       changeWeight: number;
       /** The single biggest contributor (by USD) — used to deep-link the
-       *  legend address to a concrete chain explorer. */
+       *  legend address to a concrete chain explorer + pick a market
+       *  price reference for the legend Price column. */
       topChain: ChainId | null;
       topContract: string | null;
       topValue: number;
+      topPriceUsd: number | null;
     }
     const map = new Map<string, Bucket>();
     for (const r of includedRows) {
@@ -233,6 +236,7 @@ export function AllHoldingsOverview({
           cur.topValue = r.valueUsd;
           cur.topChain = r.chain;
           cur.topContract = r.contract;
+          cur.topPriceUsd = r.priceUsd ?? cur.topPriceUsd;
         }
       } else {
         map.set(k, {
@@ -247,6 +251,7 @@ export function AllHoldingsOverview({
           topChain: r.chain,
           topContract: r.contract,
           topValue: r.valueUsd,
+          topPriceUsd: r.priceUsd ?? null,
         });
       }
     }
@@ -291,6 +296,8 @@ export function AllHoldingsOverview({
         change24h,
         primaryChain: info.topChain ?? undefined,
         primaryContract: info.topContract ?? undefined,
+        walletCount: info.wallets.size,
+        priceUsd: info.topPriceUsd,
       };
     });
     if (rest.length > 0) {
@@ -394,7 +401,21 @@ export function AllHoldingsOverview({
         <ChartViewToggle value={chartView} onChange={setView} />
       </div>
 
-      {chartView === "pie" ? (
+      {chartView === "table" && (
+        <PieChart
+          slices={slices}
+          totalLabel="Included"
+          coinsCount={
+            slices.filter((s) => s.label !== "Other").length +
+            (slices.find((s) => s.label === "Other") ? 1 : 0)
+          }
+          holdingsCount={includedRows.length}
+          btcPriceUsd={btcPriceUsd}
+          onSliceClick={focusAsset}
+          mode="table"
+        />
+      )}
+      {chartView === "pie" && (
         <>
           <PieChart
             slices={slices}
@@ -406,6 +427,7 @@ export function AllHoldingsOverview({
             holdingsCount={includedRows.length}
             btcPriceUsd={btcPriceUsd}
             onSliceClick={focusAsset}
+            mode="pie"
           />
 
           {btcPriceUsd && totalUsd > 0 && (
@@ -414,17 +436,19 @@ export function AllHoldingsOverview({
             </p>
           )}
         </>
-      ) : barRows.length > 0 ? (
-        <HoldingsBarChart
-          data={barRows}
-          btcPriceUsd={btcPriceUsd}
-          onBarClick={focusAsset}
-        />
-      ) : (
-        <div className="text-center text-text-muted text-sm py-6">
-          No data to chart yet.
-        </div>
       )}
+      {chartView === "bars" &&
+        (barRows.length > 0 ? (
+          <HoldingsBarChart
+            data={barRows}
+            btcPriceUsd={btcPriceUsd}
+            onBarClick={focusAsset}
+          />
+        ) : (
+          <div className="text-center text-text-muted text-sm py-6">
+            No data to chart yet.
+          </div>
+        ))}
 
       {networkRows.length > 0 && (
         <div className="pt-2 border-t border-border">
@@ -492,9 +516,15 @@ function ChartViewToggle({
   value,
   onChange,
 }: {
-  value: "pie" | "bars";
-  onChange: (v: "pie" | "bars") => void;
+  value: "table" | "pie" | "bars";
+  onChange: (v: "table" | "pie" | "bars") => void;
 }) {
+  const btnCls = (active: boolean) =>
+    `inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition ${
+      active
+        ? "bg-surface text-text shadow-sm"
+        : "text-text-muted hover:text-text"
+    }`;
   return (
     <div
       role="group"
@@ -503,14 +533,25 @@ function ChartViewToggle({
     >
       <button
         type="button"
+        onClick={() => onChange("table")}
+        aria-pressed={value === "table"}
+        title="Table"
+        className={btnCls(value === "table")}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          <line x1="3" y1="9" x2="21" y2="9" />
+          <line x1="3" y1="15" x2="21" y2="15" />
+          <line x1="9" y1="3" x2="9" y2="21" />
+        </svg>
+        Table
+      </button>
+      <button
+        type="button"
         onClick={() => onChange("pie")}
         aria-pressed={value === "pie"}
         title="Pie chart"
-        className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition ${
-          value === "pie"
-            ? "bg-surface text-text shadow-sm"
-            : "text-text-muted hover:text-text"
-        }`}
+        className={btnCls(value === "pie")}
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M21 12A9 9 0 1 1 12 3v9h9z" />
@@ -522,11 +563,7 @@ function ChartViewToggle({
         onClick={() => onChange("bars")}
         aria-pressed={value === "bars"}
         title="Bar chart"
-        className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition ${
-          value === "bars"
-            ? "bg-surface text-text shadow-sm"
-            : "text-text-muted hover:text-text"
-        }`}
+        className={btnCls(value === "bars")}
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <line x1="6" y1="20" x2="6" y2="10" />

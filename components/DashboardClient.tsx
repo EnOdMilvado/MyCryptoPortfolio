@@ -25,6 +25,8 @@ import {
   type ViewMode,
 } from "./ViewToggle";
 import { supabaseBrowser } from "@/lib/supabase/browser";
+// SortableSectionsLayout will be wired in the next iteration — file ready.
+// import { SortableSectionsLayout, type PageSection } from "./SortableSectionsLayout";
 import type { HoldingRow } from "./HoldingsTable";
 import { useExchangeAssetExcludes } from "./exchange/useExchangeAssetExcludes";
 import type { ReactNode } from "react";

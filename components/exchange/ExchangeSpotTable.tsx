@@ -121,21 +121,21 @@ export function ExchangeSpotTable({
               <Th onClick={() => toggle("asset")} active={sortKey === "asset"} dir={sortDir}>
                 Asset
               </Th>
-              <Th onClick={() => toggle("amount")} active={sortKey === "amount"} dir={sortDir} right>
-                Amount
-              </Th>
-              <Th onClick={() => toggle("price")} active={sortKey === "price"} dir={sortDir} right>
+              <Th onClick={() => toggle("price")} active={sortKey === "price"} dir={sortDir}>
                 Price
               </Th>
-              <Th onClick={() => toggle("value")} active={sortKey === "value"} dir={sortDir} right>
+              <Th onClick={() => toggle("amount")} active={sortKey === "amount"} dir={sortDir}>
+                Amount
+              </Th>
+              <Th onClick={() => toggle("value")} active={sortKey === "value"} dir={sortDir}>
                 Value
               </Th>
               {btcPriceUsd != null && (
-                <Th onClick={() => toggle("btc")} active={sortKey === "btc"} dir={sortDir} right>
+                <Th onClick={() => toggle("btc")} active={sortKey === "btc"} dir={sortDir}>
                   ≈ BTC
                 </Th>
               )}
-              <th className="px-2 py-2 w-8" aria-label="External" />
+              <th className="px-2 py-2 w-8 text-left" aria-label="External" />
             </tr>
           </thead>
           <tbody>
@@ -168,27 +168,30 @@ export function ExchangeSpotTable({
                   >
                     {r.asset}
                   </td>
+                  {/* Price */}
+                  <td className="px-3 py-2 text-left">
+                    <UsdValue value={r.priceUsd} priceUsd={r.priceUsd} />
+                  </td>
+                  {/* Amount */}
                   <td
-                    className={`px-3 py-2 text-right ${isHidden ? "line-through" : ""}`}
+                    className={`px-3 py-2 text-left ${isHidden ? "line-through" : ""}`}
                   >
                     {formatAmount(r.amount)}
                   </td>
-                  <td className="px-3 py-2 text-right">
-                    <UsdValue value={r.priceUsd} priceUsd={r.priceUsd} />
-                  </td>
+                  {/* Value */}
                   <td
-                    className={`px-3 py-2 text-right font-semibold ${
+                    className={`px-3 py-2 text-left font-semibold ${
                       isHidden ? "line-through" : ""
                     }`}
                   >
                     <UsdValue value={r.valueUsd} priceUsd={r.priceUsd} />
                   </td>
                   {btcPriceUsd != null && (
-                    <td className="px-3 py-2 text-right text-text-muted">
+                    <td className="px-3 py-2 text-left text-text-muted">
                       {btcEquiv != null ? <BtcValue value={btcEquiv} /> : "—"}
                     </td>
                   )}
-                  <td className="px-2 py-2 text-center">
+                  <td className="px-2 py-2 text-left">
                     <CmcLink symbol={r.asset} />
                   </td>
                 </tr>
