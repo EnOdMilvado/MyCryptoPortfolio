@@ -124,6 +124,9 @@ export function ExchangeSpotTable({
               <Th onClick={() => toggle("price")} active={sortKey === "price"} dir={sortDir}>
                 Price
               </Th>
+              <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide">
+                24h
+              </th>
               <Th onClick={() => toggle("amount")} active={sortKey === "amount"} dir={sortDir}>
                 Amount
               </Th>
@@ -172,6 +175,21 @@ export function ExchangeSpotTable({
                   <td className="px-3 py-2 text-left">
                     <UsdValue value={r.priceUsd} priceUsd={r.priceUsd} />
                   </td>
+                  {/* 24h */}
+                  <td className="px-3 py-2 text-left whitespace-nowrap">
+                    {r.priceChange24h == null ? (
+                      <span className="text-text-muted">—</span>
+                    ) : (
+                      <span
+                        className={`font-semibold ${
+                          r.priceChange24h >= 0 ? "text-success" : "text-danger"
+                        }`}
+                      >
+                        {r.priceChange24h >= 0 ? "+" : ""}
+                        {r.priceChange24h.toFixed(2)}%
+                      </span>
+                    )}
+                  </td>
                   {/* Amount */}
                   <td
                     className={`px-3 py-2 text-left ${isHidden ? "line-through" : ""}`}
@@ -198,6 +216,36 @@ export function ExchangeSpotTable({
               );
             })}
           </tbody>
+          {(() => {
+            const sumUsd = visible.reduce(
+              (s, r) => (excluded.has(r.asset.toUpperCase()) ? s : s + r.valueUsd),
+              0,
+            );
+            const sumBtc =
+              btcPriceUsd != null && btcPriceUsd > 0 ? sumUsd / btcPriceUsd : null;
+            if (sumUsd <= 0) return null;
+            return (
+              <tfoot className="border-t-2 border-border bg-surface-2/40">
+                <tr className="font-bold text-text">
+                  <td className="px-2 py-2" />
+                  <td className="px-3 py-2 text-left text-xs uppercase tracking-wide text-text-muted">
+                    Total
+                  </td>
+                  <td className="px-3 py-2" />
+                  <td className="px-3 py-2" />
+                  <td className="px-3 py-2 text-left tabular whitespace-nowrap">
+                    <UsdValue value={sumUsd} priceUsd={1} />
+                  </td>
+                  {btcPriceUsd != null && (
+                    <td className="px-3 py-2 text-left tabular whitespace-nowrap text-text-muted">
+                      {sumBtc != null ? <BtcValue value={sumBtc} /> : "—"}
+                    </td>
+                  )}
+                  <td className="px-2 py-2" />
+                </tr>
+              </tfoot>
+            );
+          })()}
         </table>
       </div>
       {hiddenCount > 0 && (

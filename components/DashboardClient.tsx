@@ -25,8 +25,8 @@ import {
   type ViewMode,
 } from "./ViewToggle";
 import { supabaseBrowser } from "@/lib/supabase/browser";
-// SortableSectionsLayout will be wired in the next iteration — file ready.
-// import { SortableSectionsLayout, type PageSection } from "./SortableSectionsLayout";
+import { SortableSectionsLayout, type PageSection } from "./SortableSectionsLayout";
+import { WalletsTable } from "./WalletsTable";
 import type { HoldingRow } from "./HoldingsTable";
 import { useExchangeAssetExcludes } from "./exchange/useExchangeAssetExcludes";
 import type { ReactNode } from "react";
@@ -249,186 +249,250 @@ export function DashboardClient({
         oldestFetchedAt={oldestFetchedAt}
       />
 
-      <ChangeCards snapshots={snapshots} />
-
       {portfolioSummaries.length === 0 ? (
-        <div className="card text-center animate-fade-up">
-          <p className="text-text-muted">No portfolios yet. Let&apos;s create your first one!</p>
-          <div className="mt-4">
-            <AddPortfolioDialog />
-          </div>
-        </div>
-      ) : (
         <>
-          {/* Pie + network breakdown — first content section. */}
-          {includedHoldings.length > 0 && (
-            <AllHoldingsOverview
-              title="All holdings across active portfolios"
-              btcPriceUsd={btcPriceUsd}
-            />
-          )}
-
-          {(() => {
-            // Render portfolios in the user's manual order.
-            const byId = new Map(portfolioSummaries.map((p) => [p.id, p]));
-            const ordered = orderedIds
-              .map((id) => byId.get(id))
-              .filter((p): p is (typeof portfolioSummaries)[number] => !!p);
-            const editControlsRow = (
-              <div className="flex flex-wrap items-center justify-between gap-2 animate-fade-up">
-                <h3 className="text-base font-bold text-text">Portfolios</h3>
-                <div className="flex items-center gap-2">
-                  <ViewToggle value={viewMode} onChange={setView} />
-                  <EditButton
-                    editing={editingPortfolios}
-                    onToggle={() => setEditingPortfolios((e) => !e)}
-                  />
-                </div>
-              </div>
-            );
-
-            const items = ordered.map((p, i) => {
-              const card =
-                viewMode === "grid" ? (
-                  <PortfolioCard
-                    portfolio={p}
-                    disabled={excludedPortfolios.has(p.id)}
-                    onToggleDisabled={() => togglePortfolio(p.id)}
-                    editing={editingPortfolios}
-                    onMoveUp={() => moveOrder(p.id, -1)}
-                    onMoveDown={() => moveOrder(p.id, 1)}
-                    isFirst={i === 0}
-                    isLast={i === ordered.length - 1}
-                    wiggleVariant={i % 2 === 0 ? "a" : "b"}
-                  />
-                ) : (
-                  <PortfolioListItem
-                    portfolio={p}
-                    disabled={excludedPortfolios.has(p.id)}
-                    onToggleDisabled={() => togglePortfolio(p.id)}
-                    editing={editingPortfolios}
-                    onMoveUp={() => moveOrder(p.id, -1)}
-                    onMoveDown={() => moveOrder(p.id, 1)}
-                    isFirst={i === 0}
-                    isLast={i === ordered.length - 1}
-                    wiggleVariant={i % 2 === 0 ? "a" : "b"}
-                  />
-                );
-              return (
-                <SortableCard
-                  key={p.id}
-                  id={p.id}
-                  enabled={editingPortfolios}
-                >
-                  {card}
-                </SortableCard>
-              );
-            });
-
-            return (
-              <>
-                {editControlsRow}
-                <SortableGrid ids={ordered.map((p) => p.id)} onReorder={reorderDrag}>
-                  {viewMode === "grid" ? (
-                    <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 animate-fade-up">
-                      {items}
-                      {!editingPortfolios &&
-                        nftSummary &&
-                        nftSummary.totalCount > 0 && (
-                          <NftSummaryTile key="nft-summary-tile" summary={nftSummary} />
-                        )}
-                    </section>
-                  ) : (
-                    <section className="flex flex-col gap-2 animate-fade-up">
-                      {items}
-                      {!editingPortfolios &&
-                        nftSummary &&
-                        nftSummary.totalCount > 0 && (
-                          <NftSummaryTile
-                            key="nft-summary-tile"
-                            summary={nftSummary}
-                            variant="list"
-                          />
-                        )}
-                    </section>
-                  )}
-                </SortableGrid>
-              </>
-            );
-          })()}
-
-          {/* Wallet-level toggles — capped to ~3 rows tall, scroll for the rest. */}
-          {portfolios.some((p) => p.walletIds.length > 0) && (
-            <section className="card animate-fade-up space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-bold text-text">Disable individual wallets</h3>
-                {excludedWallets.size > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setExcludedWallets(new Set());
-                      persistWallets(new Set());
-                    }}
-                    className="btn-ghost text-xs"
-                  >
-                    Re-enable all
-                  </button>
-                )}
-              </div>
-              <p className="text-xs text-text-muted">
-                Toggle a wallet to remove it from the dashboard total, pie and tables.
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-[10rem] overflow-y-auto pr-1">
-                {portfolios.flatMap((p) =>
-                  p.walletIds.map((wid) => {
-                    const isOff = excludedWallets.has(wid) || excludedPortfolios.has(p.id);
-                    const portfolioOff = excludedPortfolios.has(p.id);
-                    const walletName = walletNameLookup(holdings, wid);
-                    return (
-                      <label
-                        key={wid}
-                        className={`flex items-center gap-2 px-3 py-2 rounded-xl border cursor-pointer transition ${
-                          isOff
-                            ? "border-border bg-surface-2/40 opacity-60"
-                            : "border-border bg-surface hover:border-primary/50"
-                        }`}
-                        title={portfolioOff ? "Disabled because its portfolio is off" : ""}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={!excludedWallets.has(wid)}
-                          disabled={portfolioOff}
-                          onChange={() => toggleWallet(wid)}
-                          className="h-4 w-4 rounded border-border accent-primary"
-                        />
-                        <span className="text-sm truncate">
-                          {walletName ?? wid.slice(0, 8)}
-                        </span>
-                        <span className="text-xs text-text-muted ml-auto truncate">
-                          {p.name}
-                        </span>
-                      </label>
-                    );
-                  }),
-                )}
-              </div>
-            </section>
-          )}
-
-          {beforeTables}
-
-          {includedHoldings.length > 0 && (
-            <>
-              <AggregatedHoldingsTable
-                rows={includedHoldings}
-                btcPriceUsd={btcPriceUsd}
-              />
-              <AllHoldingsDetailTable title="Every holding (one row per wallet × token)" />
-            </>
-          )}
+          <ChangeCards snapshots={snapshots} />
+          <div className="card text-center animate-fade-up">
+            <p className="text-text-muted">No portfolios yet. Let&apos;s create your first one!</p>
+            <div className="mt-4">
+              <AddPortfolioDialog />
+            </div>
+          </div>
         </>
+      ) : (
+        <DashboardSections
+          snapshots={snapshots}
+          includedHoldings={includedHoldings}
+          btcPriceUsd={btcPriceUsd}
+          portfolios={portfolios}
+          portfolioSummaries={portfolioSummaries}
+          orderedIds={orderedIds}
+          excludedPortfolios={excludedPortfolios}
+          excludedWallets={excludedWallets}
+          editingPortfolios={editingPortfolios}
+          setEditingPortfolios={setEditingPortfolios}
+          togglePortfolio={togglePortfolio}
+          toggleWallet={toggleWallet}
+          setExcludedWallets={setExcludedWallets}
+          persistWallets={persistWallets}
+          moveOrder={moveOrder}
+          reorderDrag={reorderDrag}
+          viewMode={viewMode}
+          setView={setView}
+          nftSummary={nftSummary}
+          holdings={holdings}
+          beforeTables={beforeTables}
+        />
       )}
     </AllHoldingsProvider>
+  );
+}
+
+/**
+ * Wraps the dashboard's middle sections in SortableSectionsLayout so the
+ * user can drag-reorder the top-level cards/tables. All the section logic
+ * (portfolios IIFE, wallet toggles, exchanges, tables, etc.) is the same
+ * as the legacy inline render — just extracted into a sections[] so the
+ * layout component can sort them.
+ */
+function DashboardSections({
+  snapshots,
+  includedHoldings,
+  btcPriceUsd,
+  portfolios,
+  portfolioSummaries,
+  orderedIds,
+  excludedPortfolios,
+  excludedWallets,
+  editingPortfolios,
+  setEditingPortfolios,
+  togglePortfolio,
+  toggleWallet,
+  setExcludedWallets,
+  persistWallets,
+  moveOrder,
+  reorderDrag,
+  viewMode,
+  setView,
+  nftSummary,
+  holdings,
+  beforeTables,
+}: {
+  snapshots: Snapshot[];
+  includedHoldings: HoldingRow[];
+  btcPriceUsd: number | null;
+  portfolios: PortfolioMeta[];
+  portfolioSummaries: PortfolioSummary[];
+  orderedIds: string[];
+  excludedPortfolios: Set<string>;
+  excludedWallets: Set<string>;
+  editingPortfolios: boolean;
+  setEditingPortfolios: (fn: (e: boolean) => boolean) => void;
+  togglePortfolio: (id: string) => void;
+  toggleWallet: (id: string) => void;
+  setExcludedWallets: (s: Set<string>) => void;
+  persistWallets: (s: Set<string>) => void;
+  moveOrder: (id: string, dir: -1 | 1) => void;
+  reorderDrag: (next: string[]) => void;
+  viewMode: ViewMode;
+  setView: (v: ViewMode) => void;
+  nftSummary?: NftSummary;
+  holdings: HoldingRow[];
+  beforeTables?: ReactNode;
+}) {
+  const portfoliosNode = (() => {
+    const byId = new Map(portfolioSummaries.map((p) => [p.id, p]));
+    const ordered = orderedIds
+      .map((id) => byId.get(id))
+      .filter((p): p is (typeof portfolioSummaries)[number] => !!p);
+    const editControlsRow = (
+      <div className="flex flex-wrap items-center justify-between gap-2 animate-fade-up">
+        <h3 className="text-base font-bold text-text">Portfolios</h3>
+        <div className="flex items-center gap-2">
+          <ViewToggle value={viewMode} onChange={setView} />
+          <EditButton
+            editing={editingPortfolios}
+            onToggle={() => setEditingPortfolios((e) => !e)}
+          />
+        </div>
+      </div>
+    );
+    const items = ordered.map((p, i) => {
+      const card =
+        viewMode === "grid" ? (
+          <PortfolioCard
+            portfolio={p}
+            disabled={excludedPortfolios.has(p.id)}
+            onToggleDisabled={() => togglePortfolio(p.id)}
+            editing={editingPortfolios}
+            onMoveUp={() => moveOrder(p.id, -1)}
+            onMoveDown={() => moveOrder(p.id, 1)}
+            isFirst={i === 0}
+            isLast={i === ordered.length - 1}
+            wiggleVariant={i % 2 === 0 ? "a" : "b"}
+          />
+        ) : (
+          <PortfolioListItem
+            portfolio={p}
+            disabled={excludedPortfolios.has(p.id)}
+            onToggleDisabled={() => togglePortfolio(p.id)}
+            editing={editingPortfolios}
+            onMoveUp={() => moveOrder(p.id, -1)}
+            onMoveDown={() => moveOrder(p.id, 1)}
+            isFirst={i === 0}
+            isLast={i === ordered.length - 1}
+            wiggleVariant={i % 2 === 0 ? "a" : "b"}
+          />
+        );
+      return (
+        <SortableCard key={p.id} id={p.id} enabled={editingPortfolios}>
+          {card}
+        </SortableCard>
+      );
+    });
+    return (
+      <div className="space-y-4">
+        {editControlsRow}
+        <SortableGrid ids={ordered.map((p) => p.id)} onReorder={reorderDrag}>
+          {viewMode === "grid" ? (
+            <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 animate-fade-up">
+              {items}
+              {!editingPortfolios &&
+                nftSummary &&
+                nftSummary.totalCount > 0 && (
+                  <NftSummaryTile key="nft-summary-tile" summary={nftSummary} />
+                )}
+            </section>
+          ) : (
+            <section className="flex flex-col gap-2 animate-fade-up">
+              {items}
+              {!editingPortfolios &&
+                nftSummary &&
+                nftSummary.totalCount > 0 && (
+                  <NftSummaryTile
+                    key="nft-summary-tile"
+                    summary={nftSummary}
+                    variant="list"
+                  />
+                )}
+            </section>
+          )}
+        </SortableGrid>
+      </div>
+    );
+  })();
+
+  const allWalletIds = portfolios.flatMap((p) => p.walletIds);
+  const walletTogglesNode = (
+    <section className="card animate-fade-up space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-bold text-text">Disable individual wallets</h3>
+        {excludedWallets.size > 0 && (
+          <button
+            type="button"
+            onClick={() => {
+              setExcludedWallets(new Set());
+              persistWallets(new Set());
+            }}
+            className="btn-ghost text-xs"
+          >
+            Re-enable all
+          </button>
+        )}
+      </div>
+      <p className="text-xs text-text-muted">
+        Toggle a wallet to remove it from the dashboard total, pie and tables.
+      </p>
+      <WalletsTable
+        rows={holdings}
+        walletIds={allWalletIds}
+        btcPriceUsd={btcPriceUsd}
+        excludedWallets={excludedWallets}
+        excludedPortfolios={excludedPortfolios}
+        onToggleWallet={toggleWallet}
+      />
+    </section>
+  );
+
+  const sections: PageSection[] = [];
+  sections.push({ id: "change-cards", label: "Changes", node: <ChangeCards snapshots={snapshots} /> });
+  if (includedHoldings.length > 0) {
+    sections.push({
+      id: "overview",
+      label: "Overview",
+      node: (
+        <AllHoldingsOverview
+          title="All holdings across active portfolios"
+          btcPriceUsd={btcPriceUsd}
+        />
+      ),
+    });
+  }
+  sections.push({ id: "portfolios", label: "Portfolios", node: portfoliosNode });
+  if (portfolios.some((p) => p.walletIds.length > 0)) {
+    sections.push({ id: "wallet-toggles", label: "Wallets", node: walletTogglesNode });
+  }
+  if (beforeTables) {
+    sections.push({ id: "exchanges", label: "Exchanges", node: beforeTables });
+  }
+  if (includedHoldings.length > 0) {
+    sections.push({
+      id: "all-holdings",
+      label: "All holdings",
+      node: (
+        <div className="space-y-8">
+          <AggregatedHoldingsTable rows={includedHoldings} btcPriceUsd={btcPriceUsd} />
+          <AllHoldingsDetailTable title="Every holding (one row per wallet × token)" />
+        </div>
+      ),
+    });
+  }
+
+  return (
+    <SortableSectionsLayout
+      storageKey="crypto-dashboard-section-order"
+      sections={sections}
+    />
   );
 }
 

@@ -16,6 +16,8 @@ export interface SpotRow {
   amount: number;
   priceUsd: number | null;
   valueUsd: number;
+  /** Latest 24h % change (from CMC when configured). */
+  priceChange24h?: number | null;
   fetchedAt: string;
 }
 

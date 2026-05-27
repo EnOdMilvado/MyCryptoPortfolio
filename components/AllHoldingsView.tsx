@@ -173,14 +173,16 @@ export function AllHoldingsOverview({
     focusAsset,
   } = useAllHoldings();
   const { dark } = useTheme();
-  // View selector — Table / Pie / Bars, persisted in localStorage so the
+  // View selector — Table / Bars, persisted in localStorage so the
   // preference survives reloads. Defaults to the structured table.
-  type ChartView = "table" | "pie" | "bars";
+  // (The standalone "Pie" view was removed — the donut now lives inline
+  // in the ChangeCards row at the top of the dashboard.)
+  type ChartView = "table" | "bars";
   const [chartView, setChartView] = useState<ChartView>("table");
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem("crypto-chart-view");
-      if (saved === "table" || saved === "pie" || saved === "bars") setChartView(saved);
+      if (saved === "table" || saved === "bars") setChartView(saved);
     } catch {}
   }, []);
   function setView(v: ChartView) {
@@ -415,28 +417,6 @@ export function AllHoldingsOverview({
           mode="table"
         />
       )}
-      {chartView === "pie" && (
-        <>
-          <PieChart
-            slices={slices}
-            totalLabel="Included"
-            coinsCount={
-              slices.filter((s) => s.label !== "Other").length +
-              (slices.find((s) => s.label === "Other") ? 1 : 0)
-            }
-            holdingsCount={includedRows.length}
-            btcPriceUsd={btcPriceUsd}
-            onSliceClick={focusAsset}
-            mode="pie"
-          />
-
-          {btcPriceUsd && totalUsd > 0 && (
-            <p className="text-center text-xs text-text-muted tabular">
-              ≈ {formatBtc(totalBtc)}
-            </p>
-          )}
-        </>
-      )}
       {chartView === "bars" &&
         (barRows.length > 0 ? (
           <HoldingsBarChart
@@ -516,8 +496,8 @@ function ChartViewToggle({
   value,
   onChange,
 }: {
-  value: "table" | "pie" | "bars";
-  onChange: (v: "table" | "pie" | "bars") => void;
+  value: "table" | "bars";
+  onChange: (v: "table" | "bars") => void;
 }) {
   const btnCls = (active: boolean) =>
     `inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition ${
@@ -545,18 +525,6 @@ function ChartViewToggle({
           <line x1="9" y1="3" x2="9" y2="21" />
         </svg>
         Table
-      </button>
-      <button
-        type="button"
-        onClick={() => onChange("pie")}
-        aria-pressed={value === "pie"}
-        title="Pie chart"
-        className={btnCls(value === "pie")}
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M21 12A9 9 0 1 1 12 3v9h9z" />
-        </svg>
-        Pie
       </button>
       <button
         type="button"

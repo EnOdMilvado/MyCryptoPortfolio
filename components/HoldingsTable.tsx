@@ -7,6 +7,8 @@ import { isLikelySpam } from "@/lib/spam";
 import { ChainPill } from "./ChainPill";
 import { CmcLink } from "./CmcLink";
 import { CopyButton } from "./CopyButton";
+import { tokenExplorerUrl } from "@/lib/chains/explorers";
+import { shortenAddress } from "@/lib/format";
 import { UsdValue } from "./MaskedValue";
 import { useHideBalance } from "./HideBalanceProvider";
 
@@ -57,6 +59,27 @@ interface ColumnDef {
   filterValue?: (r: HoldingRow) => string;
 }
 
+/** % of total cell — receives the precomputed table total so each row
+ *  doesn't have to re-sum. */
+function PctCell({
+  value,
+  total,
+  on,
+}: {
+  value: number;
+  total: number;
+  on: boolean;
+}) {
+  if (!on || total <= 0 || value <= 0) {
+    return <span className="text-text-muted text-xs">—</span>;
+  }
+  return (
+    <span className="tabular text-text-muted text-xs">
+      {((value / total) * 100).toFixed(1)}%
+    </span>
+  );
+}
+
 /** Small BTC cell that respects the global Hide-balance toggle. */
 function BtcCell({
   valueUsd,
@@ -93,13 +116,13 @@ function buildColumns(btcPriceUsd: number | null | undefined): ColumnDef[] {
       filterValue: (r) =>
         `${r.symbol ?? ""} ${r.name ?? ""}`.toLowerCase(),
       render: (r) => (
-        <div className="min-w-0">
+        <div className="min-w-0 max-w-[7rem]">
           <div className="font-semibold truncate" title={r.symbol ?? ""}>
             {r.symbol ?? "—"}
           </div>
           {r.name && r.name !== r.symbol && (
             <div
-              className="text-xs text-text-muted truncate max-w-[10rem]"
+              className="text-xs text-text-muted truncate"
               title={r.name}
             >
               {r.name}
@@ -183,37 +206,63 @@ function buildColumns(btcPriceUsd: number | null | undefined): ColumnDef[] {
 
   cols.push(
     {
+      key: "pct",
+      label: "%",
+      // % column has no built-in render data; rendered via PctCell which
+      // reads the row total from a sibling. We approximate by leaving
+      // render empty here and computing in the table-body section below.
+      render: () => null,
+    },
+    {
       key: "walletName",
-      label: "Wallet name",
-      filterValue: (r) => r.walletName.toLowerCase(),
+      label: "Wallet",
+      filterValue: (r) =>
+        `${r.walletName} ${CHAIN_LABEL[r.chain]}`.toLowerCase(),
       render: (r) => (
-        <span className="text-sm truncate block max-w-[10rem]" title={r.walletName}>
-          {r.walletName}
-        </span>
+        <div className="flex items-center gap-1.5 min-w-0 max-w-[10rem]">
+          <ChainPill chain={r.chain} size="xs" />
+          <span className="text-sm truncate" title={r.walletName}>
+            {r.walletName}
+          </span>
+        </div>
       ),
     },
     {
-      key: "chain",
-      label: "Network",
-      filterValue: (r) => CHAIN_LABEL[r.chain].toLowerCase(),
-      render: (r) => <ChainPill chain={r.chain} />,
-    },
-    {
-      key: "walletAddress",
-      label: "Wallet address",
-      filterValue: (r) => r.walletAddress.toLowerCase(),
-      render: (r) => (
-        <CopyButton
-          value={r.walletAddress}
-          showValue
-          truncate={{ head: 6, tail: 4 }}
-          label="Copy wallet address"
-        />
-      ),
+      key: "address",
+      label: "Address",
+      filterValue: (r) => (r.contract ?? "").toLowerCase(),
+      render: (r) => {
+        if (!r.contract || r.contract === "native") {
+          return <span className="text-xs text-text-muted">native</span>;
+        }
+        const url = tokenExplorerUrl(r.chain, r.contract);
+        const short = shortenAddress(r.contract, 6, 4);
+        if (!url) {
+          return (
+            <span
+              className="font-mono text-xs text-text-muted"
+              title={r.contract}
+            >
+              {short}
+            </span>
+          );
+        }
+        return (
+          <a
+            href={url}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="font-mono text-xs text-primary hover:text-primary-hover"
+            title={r.contract}
+          >
+            {short} ↗
+          </a>
+        );
+      },
     },
     {
       key: "cmc",
-      label: "",
+      label: "CMC",
       render: (r) => <CmcLink symbol={r.symbol ?? r.name} />,
     },
   );
@@ -312,6 +361,18 @@ export function HoldingsTable({
     return arr;
   }, [COLUMNS, filtered, sortKey, sortDir]);
 
+  // Grand total across visible rows (only included ones, when the table
+  // has selectable checkboxes). Drives the % column + tfoot Total.
+  const totalForPct = useMemo(() => {
+    return sorted.reduce((s, r) => {
+      if (selectable) {
+        const k = selectable.getKey(r);
+        if (!selectable.checked.has(k)) return s;
+      }
+      return s + r.valueUsd;
+    }, 0);
+  }, [sorted, selectable]);
+
   function toggleSort(key: SortKey) {
     if (sortKey === key) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -393,51 +454,37 @@ export function HoldingsTable({
             both axes of scroll; sticky thead keeps headers visible.
             "Show full table" below removes the cap. */}
         <div
-          className={`overflow-x-auto overflow-y-auto ${expanded ? "" : "max-h-[1380px]"}`}
+          className={`overflow-x-hidden overflow-y-auto ${expanded ? "" : "max-h-[1380px]"}`}
         >
-          <table className="w-full text-sm">
+          <table className="w-full text-sm table-auto">
           <thead className="bg-surface-2/80 text-text-muted sticky top-0 z-10 backdrop-blur-sm">
             <tr>
               {selectable && (
-                <th className="px-3 py-3 text-left whitespace-nowrap w-10">
+                <th className="px-2 py-2 text-left whitespace-nowrap w-8">
                   <span className="sr-only">Include</span>
                 </th>
               )}
               {COLUMNS.map((c) => {
                 const active = sortKey === c.key;
-                const isEnd = c.align === "end";
                 const sortable = !!c.filterValue;
                 return (
                   <th
                     key={c.key}
-                    className={`px-3 py-3 whitespace-nowrap ${isEnd ? "text-right" : "text-left"} ${
-                      sortable ? "" : "w-8"
-                    }`}
+                    className="px-2 py-2 text-left whitespace-nowrap text-xs font-semibold uppercase tracking-wide"
                   >
                     {sortable ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => toggleSort(c.key as SortKey)}
-                          className={`inline-flex items-center gap-1 font-semibold ${active ? "text-primary" : "hover:text-text"}`}
-                        >
-                          {c.label}
-                          <span className="text-xs">
-                            {active ? (sortDir === "asc" ? "↑" : "↓") : "↕"}
-                          </span>
-                        </button>
-                        <input
-                          type="text"
-                          placeholder="Filter"
-                          value={filters[c.key] ?? ""}
-                          onChange={(e) =>
-                            setFilters((f) => ({ ...f, [c.key]: e.target.value }))
-                          }
-                          className="mt-1 block w-full text-xs px-2 py-1 rounded-lg bg-surface border border-border focus:outline-none focus:ring-1 focus:ring-primary/40"
-                        />
-                      </>
+                      <button
+                        type="button"
+                        onClick={() => toggleSort(c.key as SortKey)}
+                        className={`inline-flex items-center gap-1 ${active ? "text-primary" : "hover:text-text"}`}
+                      >
+                        {c.label}
+                        <span className="text-[10px]">
+                          {active ? (sortDir === "asc" ? "↑" : "↓") : "↕"}
+                        </span>
+                      </button>
                     ) : (
-                      <span className="sr-only">{c.label || "External"}</span>
+                      <span>{c.label || ""}</span>
                     )}
                   </th>
                 );
@@ -454,7 +501,7 @@ export function HoldingsTable({
                   className={`${i % 2 ? "bg-surface-2/30" : ""} ${selectable && !isChecked ? "opacity-50" : ""}`}
                 >
                   {selectable && (
-                    <td className="px-3 py-2.5 align-middle">
+                    <td className="px-2 py-2 align-middle">
                       <input
                         type="checkbox"
                         aria-label="Include in summary"
@@ -467,9 +514,17 @@ export function HoldingsTable({
                   {COLUMNS.map((c) => (
                     <td
                       key={c.key}
-                      className={`px-3 py-2.5 align-middle ${c.align === "end" ? "text-right" : "text-left"}`}
+                      className="px-2 py-2 align-middle text-left"
                     >
-                      {c.render(r)}
+                      {c.key === "pct" ? (
+                        <PctCell
+                          value={r.valueUsd}
+                          total={totalForPct}
+                          on={isChecked}
+                        />
+                      ) : (
+                        c.render(r)
+                      )}
                     </td>
                   ))}
                 </tr>
@@ -486,6 +541,58 @@ export function HoldingsTable({
               </tr>
             )}
           </tbody>
+          {(() => {
+            const includedSum = sorted.reduce((s, r) => {
+              if (selectable) {
+                const k = selectable.getKey(r);
+                if (!selectable.checked.has(k)) return s;
+              }
+              return s + r.valueUsd;
+            }, 0);
+            if (includedSum <= 0) return null;
+            const sumBtc =
+              btcPriceUsd != null && btcPriceUsd > 0 ? includedSum / btcPriceUsd : null;
+            return (
+              <tfoot className="border-t-2 border-border bg-surface-2/40">
+                <tr className="font-bold text-text">
+                  {selectable && <td className="px-2 py-2" />}
+                  {COLUMNS.map((c) => {
+                    if (c.key === "symbol") {
+                      return (
+                        <td
+                          key={c.key}
+                          className="px-2 py-2 text-left text-xs uppercase tracking-wide text-text-muted"
+                        >
+                          Total
+                        </td>
+                      );
+                    }
+                    if (c.key === "valueUsd") {
+                      return (
+                        <td
+                          key={c.key}
+                          className="px-2 py-2 text-left tabular whitespace-nowrap"
+                        >
+                          <UsdValue value={includedSum} priceUsd={1} />
+                        </td>
+                      );
+                    }
+                    if (c.key === "valueBtc") {
+                      return (
+                        <td
+                          key={c.key}
+                          className="px-2 py-2 text-left tabular whitespace-nowrap text-text-muted"
+                        >
+                          {sumBtc != null ? formatBtc(sumBtc) : "—"}
+                        </td>
+                      );
+                    }
+                    return <td key={c.key} className="px-2 py-2" />;
+                  })}
+                </tr>
+              </tfoot>
+            );
+          })()}
         </table>
       </div>
       {/* Show-full-table toggle. When expanded the height cap is removed AND

@@ -73,6 +73,16 @@ export interface OffchainRow {
   valueUsd: number;
 }
 
+/** Tight USD label that fits inside a per-asset chip ($1.2K / $4.5M). */
+function compactUsd(v: number): string {
+  if (!Number.isFinite(v) || v <= 0) return "0";
+  if (v >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(2)}B`;
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`;
+  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
+  if (v >= 1) return v.toFixed(2);
+  return v.toFixed(2);
+}
+
 const KIND_LABEL: Record<string, string> = {
   cash: "Cash",
   bank: "Bank",
@@ -185,11 +195,37 @@ export function ExchangesAndOffchain({
                   aria-label={`Open ${ex.label}`}
                 />
                 <div className="min-w-0 flex-1 relative z-10 pointer-events-none">
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                     <span className="font-semibold text-text group-hover:text-primary">
                       {ex.label}
                     </span>
                     <span className="pill">{ex.provider}</span>
+                    {(() => {
+                      const ex2 = excludes[ex.id] ?? new Set<string>();
+                      const top = [...ex.balances]
+                        .filter(
+                          (b) => b.valueUsd > 0 && !ex2.has(b.asset.toUpperCase()),
+                        )
+                        .sort((a, b) => b.valueUsd - a.valueUsd)
+                        .slice(0, 4);
+                      if (top.length === 0) return null;
+                      return (
+                        <span className="inline-flex flex-wrap items-center gap-1.5">
+                          {top.map((b) => (
+                            <span
+                              key={b.asset}
+                              className="inline-flex items-center gap-1 text-[11px] font-semibold text-text bg-surface-2 px-1.5 py-0.5 rounded"
+                              title={`${b.asset} · $${b.valueUsd.toFixed(2)}`}
+                            >
+                              {b.asset}
+                              <span className="text-text-muted font-normal tabular">
+                                ${compactUsd(b.valueUsd)}
+                              </span>
+                            </span>
+                          ))}
+                        </span>
+                      );
+                    })()}
                   </div>
                   <div className="text-xs text-text-muted mt-0.5">
                     {ex.balanceCount} {ex.balanceCount === 1 ? "asset" : "assets"}

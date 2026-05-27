@@ -186,40 +186,34 @@ function SortableSection({
     boxShadow: isDragging ? "0 20px 40px rgba(0,0,0,0.18)" : undefined,
     opacity: isDragging ? 0.92 : 1,
   };
-  // Wiggle gives a visual cue that the section is draggable. We alternate
-  // between two animation classes so neighboring sections don't move in
-  // perfect sync (looks more natural).
-  const wiggleCls = editing
-    ? id.charCodeAt(0) % 2 === 0
-      ? "animate-wiggle-a"
-      : "animate-wiggle-b"
-    : "";
   return (
-    <div ref={setNodeRef} style={style} className={`relative ${wiggleCls}`}>
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`relative ${editing ? "ring-1 ring-primary/20 rounded-2xl" : ""}`}
+    >
       {editing && (
         <div
           {...attributes}
           {...listeners}
-          className="absolute -left-3 top-2 z-20 inline-flex items-center gap-1 rounded-full bg-primary text-white px-2 py-1 text-[10px] font-semibold cursor-grab active:cursor-grabbing shadow-sm select-none"
+          className="absolute -left-3 top-2 z-20 inline-flex items-center gap-1.5 rounded-md bg-primary text-white px-2 py-1.5 text-[11px] font-semibold cursor-grab active:cursor-grabbing shadow-sm select-none hover:bg-primary-hover"
           title="Drag to reorder"
         >
+          {/* Three horizontal lines (hamburger / grip) icon */}
           <svg
-            width="10"
-            height="10"
+            width="12"
+            height="12"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
-            strokeWidth="2.6"
+            strokeWidth="2.4"
             strokeLinecap="round"
             strokeLinejoin="round"
             aria-hidden
           >
-            <circle cx="9" cy="6" r="1" />
-            <circle cx="9" cy="12" r="1" />
-            <circle cx="9" cy="18" r="1" />
-            <circle cx="15" cy="6" r="1" />
-            <circle cx="15" cy="12" r="1" />
-            <circle cx="15" cy="18" r="1" />
+            <line x1="4" y1="7" x2="20" y2="7" />
+            <line x1="4" y1="12" x2="20" y2="12" />
+            <line x1="4" y1="17" x2="20" y2="17" />
           </svg>
           {label && <span>{label}</span>}
         </div>

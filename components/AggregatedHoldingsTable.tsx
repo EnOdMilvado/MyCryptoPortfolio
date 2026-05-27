@@ -213,6 +213,16 @@ export function AggregatedHoldingsTable({
     [aggregatedAll, effShowDust],
   );
 
+  // Grand total across the (visible) included rows — used for the % column.
+  const grandTotalUsd = useMemo(
+    () =>
+      aggregated.reduce(
+        (s, r) => (excluded.has(r.key) ? s : s + r.totalUsd),
+        0,
+      ),
+    [aggregated, excluded],
+  );
+
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
     if (!q) return aggregated;
@@ -341,21 +351,20 @@ export function AggregatedHoldingsTable({
               across the card with no dead space in the middle. On mobile we
               hide Amount / 24h / Wallets columns and let Asset + USD grow to
               fill the row; key info is embedded inline under the Asset name. */}
+          {/* 10 columns when showBtc, 9 otherwise:
+              Include / Asset / Price / 24h / Amount / USD / [BTC] / % / Wallets / Address / CMC */}
           <colgroup>
-            <col className="w-[14%] sm:w-[5%]" />
-            <col
-              className={`w-[56%] ${showBtc ? "sm:w-[22%]" : "sm:w-[26%]"}`}
-            />
-            <col className="hidden sm:table-column sm:w-[11%]" />
+            <col className="w-[8%] sm:w-[4%]" />
+            <col className="w-[40%] sm:w-[14%]" />
+            <col className="hidden sm:table-column sm:w-[10%]" />
+            <col className="hidden sm:table-column sm:w-[8%]" />
+            <col className="hidden sm:table-column sm:w-[10%]" />
+            <col className="w-[30%] sm:w-[12%]" />
+            {showBtc && <col className="hidden sm:table-column sm:w-[10%]" />}
+            <col className="hidden sm:table-column sm:w-[6%]" />
+            <col className="hidden sm:table-column sm:w-[6%]" />
             <col className="hidden sm:table-column sm:w-[12%]" />
-            <col className="hidden sm:table-column sm:w-[10%]" />
-            <col className="hidden sm:table-column sm:w-[10%]" />
-            <col
-              className={`w-[30%] ${showBtc ? "sm:w-[15%]" : "sm:w-[20%]"}`}
-            />
-            {showBtc && (
-              <col className="hidden sm:table-column sm:w-[15%]" />
-            )}
+            <col className="w-[22%] sm:w-[6%]" />
           </colgroup>
           <thead className="bg-surface-2/80 text-text-muted sticky top-0 z-10 backdrop-blur-sm">
             <tr>
@@ -390,31 +399,18 @@ export function AggregatedHoldingsTable({
                   active={sortKey === "totalAmount"}
                   dir={sortDir}
                   onClick={() => toggleSort("totalAmount")}
-                  align="end"
                 />
               </th>
-              <th className="hidden sm:table-cell px-2 py-2.5 text-left">
-                <SortHeader
-                  label="Wallets"
-                  active={sortKey === "walletCount"}
-                  dir={sortDir}
-                  onClick={() => toggleSort("walletCount")}
-                  align="end"
-                />
-              </th>
-              <th
-                className={`px-2 py-2.5 text-left ${showBtc ? "" : "pr-3"}`}
-              >
+              <th className="px-2 py-2.5 text-left">
                 <SortHeader
                   label="USD"
                   active={sortKey === "totalUsd"}
                   dir={sortDir}
                   onClick={() => toggleSort("totalUsd")}
-                  align="end"
                 />
               </th>
               {showBtc && (
-                <th className="hidden sm:table-cell px-2 py-2.5 text-left pr-3">
+                <th className="hidden sm:table-cell px-2 py-2.5 text-left">
                   <SortHeader
                     label="BTC"
                     // BTC value is proportional to USD value, so the sort
@@ -422,11 +418,24 @@ export function AggregatedHoldingsTable({
                     active={sortKey === "totalUsd"}
                     dir={sortDir}
                     onClick={() => toggleSort("totalUsd")}
-                    align="end"
                   />
                 </th>
               )}
-              <th className="px-2 py-2.5 w-12 pr-2 text-left text-xs font-semibold uppercase tracking-wide text-text-muted">
+              <th className="hidden sm:table-cell px-2 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-text-muted">
+                %
+              </th>
+              <th className="hidden sm:table-cell px-2 py-2.5 text-left">
+                <SortHeader
+                  label="Wallets"
+                  active={sortKey === "walletCount"}
+                  dir={sortDir}
+                  onClick={() => toggleSort("walletCount")}
+                />
+              </th>
+              <th className="hidden sm:table-cell px-2 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-text-muted">
+                Address
+              </th>
+              <th className="px-2 py-2.5 pr-2 text-left text-xs font-semibold uppercase tracking-wide text-text-muted">
                 CMC
               </th>
             </tr>
@@ -464,7 +473,6 @@ export function AggregatedHoldingsTable({
                           {r.name}
                         </div>
                       )}
-                      <AggAddressLink contributors={r.contributors} />
 
                       {/* Mobile-only secondary line: 24h % + amount + wallet
                           count. Tap to expand contributors. */}
@@ -518,6 +526,31 @@ export function AggregatedHoldingsTable({
                     <td className="hidden sm:table-cell px-2 py-2.5 align-middle text-left tabular text-sm whitespace-nowrap">
                       {formatAmount(r.totalAmount)}
                     </td>
+                    {/* USD */}
+                    <td className="px-2 py-2.5 align-middle text-left whitespace-nowrap">
+                      <UsdValue
+                        value={r.totalUsd}
+                        priceUsd={r.hasPrice ? 1 : null}
+                        className="tabular font-semibold"
+                      />
+                    </td>
+                    {/* BTC */}
+                    {showBtc && (
+                      <td className="hidden sm:table-cell px-2 py-2.5 align-middle text-left whitespace-nowrap">
+                        <AggBtcCell
+                          totalUsd={r.totalUsd}
+                          hasPrice={r.hasPrice}
+                          btcPriceUsd={btcPriceUsd!}
+                        />
+                      </td>
+                    )}
+                    {/* % of total */}
+                    <td className="hidden sm:table-cell px-2 py-2.5 align-middle text-left tabular text-xs text-text-muted whitespace-nowrap">
+                      {grandTotalUsd > 0 && isChecked
+                        ? `${((r.totalUsd / grandTotalUsd) * 100).toFixed(1)}%`
+                        : "—"}
+                    </td>
+                    {/* Wallets (click to expand contributors) */}
                     <td className="hidden sm:table-cell px-2 py-2.5 align-middle text-left">
                       <button
                         type="button"
@@ -536,33 +569,18 @@ export function AggregatedHoldingsTable({
                         </span>
                       </button>
                     </td>
-                    <td
-                      className={`px-2 py-2.5 align-middle text-left whitespace-nowrap ${
-                        showBtc ? "" : "pr-3"
-                      }`}
-                    >
-                      <UsdValue
-                        value={r.totalUsd}
-                        priceUsd={r.hasPrice ? 1 : null}
-                        className="tabular font-semibold"
-                      />
+                    {/* Address (largest-USD contributor → chain explorer) */}
+                    <td className="hidden sm:table-cell px-2 py-2.5 align-middle text-left">
+                      <AggAddressLink contributors={r.contributors} />
                     </td>
-                    {showBtc && (
-                      <td className="hidden sm:table-cell px-2 py-2.5 align-middle text-left whitespace-nowrap pr-3">
-                        <AggBtcCell
-                          totalUsd={r.totalUsd}
-                          hasPrice={r.hasPrice}
-                          btcPriceUsd={btcPriceUsd!}
-                        />
-                      </td>
-                    )}
-                    <td className="px-2 py-2.5 align-middle text-center w-8 pr-2">
+                    {/* CMC */}
+                    <td className="px-2 py-2.5 align-middle text-left pr-2">
                       <CmcLink symbol={r.symbol} />
                     </td>
                   </tr>
                   {isExpanded && (
                     <tr key={`${r.key}-expand`} className="bg-surface-2/40">
-                      <td colSpan={showBtc ? 9 : 8} className="px-4 py-3">
+                      <td colSpan={showBtc ? 11 : 10} className="px-4 py-3">
                         <div className="text-xs text-text-muted mb-2">
                           {r.contributors.length}{" "}
                           {r.contributors.length === 1 ? "holding" : "holdings"} on{" "}
@@ -654,7 +672,7 @@ export function AggregatedHoldingsTable({
             {sorted.length === 0 && (
               <tr>
                 <td
-                  colSpan={showBtc ? 9 : 8}
+                  colSpan={showBtc ? 11 : 10}
                   className="px-3 py-6 text-center text-text-muted"
                 >
                   No assets match the current filter
@@ -662,6 +680,35 @@ export function AggregatedHoldingsTable({
               </tr>
             )}
           </tbody>
+          {grandTotalUsd > 0 && (
+            <tfoot className="border-t-2 border-border bg-surface-2/40">
+              <tr className="font-bold text-text">
+                <td className="px-2 py-2.5" />
+                <td className="px-2 py-2.5 text-left text-xs uppercase tracking-wide text-text-muted">
+                  Total
+                </td>
+                <td className="hidden sm:table-cell px-2 py-2.5" />
+                <td className="hidden sm:table-cell px-2 py-2.5" />
+                <td className="hidden sm:table-cell px-2 py-2.5" />
+                <td className="px-2 py-2.5 text-left whitespace-nowrap tabular">
+                  <UsdValue value={grandTotalUsd} priceUsd={1} />
+                </td>
+                {showBtc && (
+                  <td className="hidden sm:table-cell px-2 py-2.5 text-left whitespace-nowrap tabular text-text-muted">
+                    {btcPriceUsd && btcPriceUsd > 0
+                      ? formatBtc(grandTotalUsd / btcPriceUsd)
+                      : "—"}
+                  </td>
+                )}
+                <td className="hidden sm:table-cell px-2 py-2.5 text-left text-xs text-text-muted">
+                  100%
+                </td>
+                <td className="hidden sm:table-cell px-2 py-2.5" />
+                <td className="hidden sm:table-cell px-2 py-2.5" />
+                <td className="px-2 py-2.5" />
+              </tr>
+            </tfoot>
+          )}
         </table>
       </div>
       {(dustCount > 0 || spamCount > 0 || aggregated.length >= 20) && (

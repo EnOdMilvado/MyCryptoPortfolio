@@ -336,6 +336,28 @@ export function PieChart({
               );
             })}
           </tbody>
+          <tfoot className="border-t-2 border-border bg-surface-2/40">
+            <tr className="font-bold text-text">
+              <td className="px-2 py-2 text-left text-xs uppercase tracking-wide text-text-muted">
+                Total
+              </td>
+              <td className="px-2 py-2" />
+              <td className="px-2 py-2" />
+              <td className="px-2 py-2" />
+              <td className="px-2 py-2 text-left whitespace-nowrap">
+                {hidden ? "••••" : formatUsd(total)}
+              </td>
+              {showBtc && (
+                <td className="px-2 py-2 text-left text-text-muted whitespace-nowrap">
+                  {hidden ? "••••" : formatBtc(total / (btcPriceUsd as number))}
+                </td>
+              )}
+              <td className="px-2 py-2 text-left text-xs text-text-muted">100%</td>
+              <td className="px-2 py-2" />
+              <td className="px-2 py-2" />
+              <td className="px-2 py-2" />
+            </tr>
+          </tfoot>
         </table>
       </div>
       )}

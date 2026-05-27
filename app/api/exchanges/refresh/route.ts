@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
 import { getAdapter } from "@/lib/exchanges/registry";
-import { resolvePricesForSymbols } from "@/lib/exchanges/prices";
+import { resolvePricesForSymbols, resolvePriceQuotesForSymbols } from "@/lib/exchanges/prices";
 import {
   ALL_SYNC_KINDS,
   type ExchangeCredentials,
@@ -31,6 +31,7 @@ interface SpotBalanceOut {
   amount: number;
   priceUsd: number | null;
   valueUsd: number;
+  priceChange24h: number | null;
 }
 
 interface KindError {
@@ -114,6 +115,7 @@ export async function POST(request: Request) {
         // Authoritative first: ask the exchange itself for prices on its
         // listed tokens. Fill the long-tail with our generic resolver.
         const prices: Record<string, number> = {};
+        const change24h: Record<string, number | null> = {};
         if (adapter.fetchAssetPricesUsd) {
           try {
             const exchangePrices = await adapter.fetchAssetPricesUsd(symbols, creds);
@@ -124,6 +126,17 @@ export async function POST(request: Request) {
             // Non-fatal — fall back to generic resolver below.
           }
         }
+        // CMC quotes give us 24h % change for ALL symbols, even ones where
+        // exchange ticker already supplied a price — overwrite the price
+        // when CMC has it (CMC tends to be more consistent for cross-token
+        // valuation than per-exchange last-trade prices).
+        const quotes = await resolvePriceQuotesForSymbols(symbols);
+        for (const k of Object.keys(quotes)) {
+          const q = quotes[k];
+          if (prices[k] == null) prices[k] = q.priceUsd;
+          change24h[k] = q.change24h;
+        }
+        // Final pass: anything still missing → price-only resolver.
         const stillMissing = symbols.filter((s) => prices[s.toUpperCase()] == null);
         if (stillMissing.length > 0) {
           const fallback = await resolvePricesForSymbols(stillMissing);
@@ -133,12 +146,14 @@ export async function POST(request: Request) {
         }
 
         const out: SpotBalanceOut[] = balances.map((b) => {
-          const price = prices[b.asset.toUpperCase()] ?? null;
+          const upper = b.asset.toUpperCase();
+          const price = prices[upper] ?? null;
           return {
             asset: b.asset,
             amount: b.amount,
             priceUsd: price,
             valueUsd: price ? b.amount * price : 0,
+            priceChange24h: change24h[upper] ?? null,
           };
         });
         await supabase
@@ -153,6 +168,7 @@ export async function POST(request: Request) {
               amount: b.amount,
               price_usd: b.priceUsd,
               value_usd: b.valueUsd,
+              price_change_24h: b.priceChange24h,
               fetched_at: now,
             })),
           );

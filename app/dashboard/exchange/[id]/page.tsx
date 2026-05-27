@@ -73,7 +73,7 @@ export default async function ExchangePage({
   ] = await Promise.all([
     supabase
       .from("crypto_exchange_balances_cache")
-      .select("asset, amount, price_usd, value_usd, fetched_at")
+      .select("asset, amount, price_usd, value_usd, price_change_24h, fetched_at")
       .eq("exchange_id", id),
     supabase
       .from("crypto_exchange_trades")
@@ -112,12 +112,15 @@ export default async function ExchangePage({
     amount: number | string;
     price_usd: number | string | null;
     value_usd: number | string | null;
+    price_change_24h: number | string | null;
     fetched_at: string;
   }) => ({
     asset: b.asset,
     amount: Number(b.amount),
     priceUsd: b.price_usd == null ? null : Number(b.price_usd),
     valueUsd: b.value_usd == null ? 0 : Number(b.value_usd),
+    priceChange24h:
+      b.price_change_24h == null ? null : Number(b.price_change_24h),
     fetchedAt: b.fetched_at,
   }));
 

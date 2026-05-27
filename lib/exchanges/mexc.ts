@@ -364,7 +364,11 @@ export const mexcAdapter: ExchangeAdapter = {
 
   async fetchDeposits(creds, query?: TransfersQuery): Promise<DepositRow[]> {
     const endMs = query?.endTimeMs ?? Date.now();
-    const startMs = query?.startTimeMs ?? endMs - 90 * DAY_MS;
+    // MEXC enforces a STRICTLY-less-than-90-days window. Clamp the start
+    // up to ≥ endMs-89d (and never below the user-passed value) to dodge
+    // the {"code":33333,"msg":"query time cannot exceed 90 days"} error.
+    const minStart = endMs - 89 * DAY_MS;
+    const startMs = Math.max(query?.startTimeMs ?? minStart, minStart);
     const raw = await signedGet<MexcDeposit[]>(
       "/api/v3/capital/deposit/hisrec",
       { startTime: startMs, endTime: endMs },
@@ -428,7 +432,9 @@ export const mexcAdapter: ExchangeAdapter = {
 
   async fetchWithdrawals(creds, query?: TransfersQuery): Promise<WithdrawalRow[]> {
     const endMs = query?.endTimeMs ?? Date.now();
-    const startMs = query?.startTimeMs ?? endMs - 90 * DAY_MS;
+    // Same 89-day cap as deposits — see fetchDeposits for the reason.
+    const minStart = endMs - 89 * DAY_MS;
+    const startMs = Math.max(query?.startTimeMs ?? minStart, minStart);
     const raw = await signedGet<MexcWithdrawal[]>(
       "/api/v3/capital/withdraw/history",
       { startTime: startMs, endTime: endMs },

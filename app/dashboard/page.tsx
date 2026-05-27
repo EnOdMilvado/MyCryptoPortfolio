@@ -115,7 +115,7 @@ export default async function DashboardPage() {
   const { data: exRowsFull } = await supabase
     .from("crypto_exchanges")
     .select(
-      "id, provider, label, last_synced_at, crypto_exchange_balances_cache ( asset, amount, price_usd, value_usd )",
+      "id, provider, label, last_synced_at, crypto_exchange_balances_cache ( asset, amount, price_usd, value_usd, price_change_24h )",
     )
     .order("created_at", { ascending: true });
 
@@ -124,6 +124,7 @@ export default async function DashboardPage() {
     amount: number | string | null;
     price_usd: number | string | null;
     value_usd: number | string | null;
+    price_change_24h: number | string | null;
   }
   interface RawExchange {
     id: string;
@@ -160,6 +161,8 @@ export default async function DashboardPage() {
       if (!Number.isFinite(amount) || amount <= 0) continue;
       const priceUsd = b.price_usd == null ? null : Number(b.price_usd);
       const valueUsd = b.value_usd == null ? 0 : Number(b.value_usd);
+      const priceChange24h =
+        b.price_change_24h == null ? null : Number(b.price_change_24h);
       allHoldings.push({
         walletId: `exchange:${ex.id}`,
         walletName: ex.label,
@@ -173,7 +176,7 @@ export default async function DashboardPage() {
         amount,
         priceUsd,
         valueUsd,
-        priceChange24h: null,
+        priceChange24h,
         exchangeId: ex.id,
       });
     }
