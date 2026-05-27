@@ -471,7 +471,7 @@ export function AllHoldingsDetailTable({ title }: { title?: string }) {
     : new Set(rows.map(holdingKey));
 
   return (
-    <section className="animate-fade-up space-y-2">
+    <section className="card animate-fade-up space-y-3">
       {title && (
         <h3 className="text-lg font-bold text-text">{title}</h3>
       )}
