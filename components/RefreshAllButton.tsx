@@ -38,12 +38,39 @@ export function RefreshAllButton({ walletIds, lastFetchedAt }: Props) {
         }
         setProgress({ done: Math.min(i + CHUNK_SIZE, walletIds.length), total: walletIds.length });
       }
+      // After all wallets refresh, fill in any 24h % changes that weren't
+      // captured during the per-chain price resolution. Best-effort —
+      // failures here don't block the refresh.
+      try {
+        await fetch("/api/holdings/backfill-24h", { method: "POST" });
+      } catch {
+        // non-fatal
+      }
       router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Refresh failed");
     } finally {
       setRunning(false);
       setProgress(null);
+    }
+  }
+
+  /** Standalone backfill — fast path that only fills missing 24h % changes
+   *  without re-fetching balances. Useful when you only see "—" cells. */
+  async function backfillOnly() {
+    setRunning(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/holdings/backfill-24h", { method: "POST" });
+      if (!res.ok) {
+        const json = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(json?.error ?? `Backfill failed (${res.status})`);
+      }
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Backfill failed");
+    } finally {
+      setRunning(false);
     }
   }
 
@@ -62,34 +89,45 @@ export function RefreshAllButton({ walletIds, lastFetchedAt }: Props) {
 
   return (
     <div className="flex flex-col items-end gap-1">
-      <button
-        type="button"
-        onClick={refresh}
-        disabled={running || walletIds.length === 0}
-        className={`btn-ghost ${isStale && !running ? "ring-2 ring-primary/40" : ""}`}
-        title={
-          walletIds.length === 0
-            ? "Add a wallet first"
-            : `Refresh ${walletIds.length} wallets across all portfolios`
-        }
-      >
-        <svg
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-          className={running ? "animate-spin" : ""}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={backfillOnly}
+          disabled={running}
+          className="btn-ghost text-xs"
+          title="Fill missing 24h % changes (CoinGecko + DexScreener + Alchemy Historical) without re-fetching balances"
         >
-          <path d="M21 12a9 9 0 1 1-3-6.7" />
-          <polyline points="21 4 21 10 15 10" />
-        </svg>
-        Refresh all
-      </button>
+          24h fill
+        </button>
+        <button
+          type="button"
+          onClick={refresh}
+          disabled={running || walletIds.length === 0}
+          className={`btn-ghost ${isStale && !running ? "ring-2 ring-primary/40" : ""}`}
+          title={
+            walletIds.length === 0
+              ? "Add a wallet first"
+              : `Refresh ${walletIds.length} wallets across all portfolios`
+          }
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+            className={running ? "animate-spin" : ""}
+          >
+            <path d="M21 12a9 9 0 1 1-3-6.7" />
+            <polyline points="21 4 21 10 15 10" />
+          </svg>
+          Refresh all
+        </button>
+      </div>
       <span
         className={`text-xs ${error ? "text-danger" : isStale ? "text-primary" : "text-text-muted"}`}
       >

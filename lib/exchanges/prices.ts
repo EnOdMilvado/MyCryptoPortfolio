@@ -1,4 +1,5 @@
 import { getAlchemyPricesBySymbol } from "@/lib/chains/alchemy_prices";
+import { getAlchemyChange24hBySymbol } from "@/lib/chains/alchemy_historical";
 import { getCoinGeckoPricesBySymbol, getNativePrices } from "@/lib/chains/prices";
 import { getCmcQuotes, isCmcEnabled, type CmcQuote } from "@/lib/chains/cmc_prices";
 import { getDexScreenerPricesBySymbol } from "@/lib/chains/dexscreener_symbol";
@@ -227,19 +228,38 @@ export async function resolvePriceQuotesForSymbols(
   // price but no change (CMC missed it, or the price came from a
   // change-less source like Alchemy / CoinGecko-by-id). DexScreener
   // search returns h24 % change alongside price.
-  const needChange = Object.keys(out).filter(
+  let needChange = Object.keys(out).filter(
     (sym) => out[sym].change24h == null,
   );
   if (needChange.length > 0) {
     try {
       const ds = await getDexScreenerPricesBySymbol(needChange);
       for (const sym of Object.keys(ds)) {
-        if (out[sym] && out[sym].change24h == null) {
+        if (out[sym] && out[sym].change24h == null && ds[sym].change24h != null) {
           out[sym] = { ...out[sym], change24h: ds[sym].change24h };
         }
       }
     } catch {
       // non-fatal — keep nulls
+    }
+    needChange = Object.keys(out).filter((sym) => out[sym].change24h == null);
+  }
+
+  // Final 24h-change backfill via Alchemy Historical (1 req/token, but
+  // only for what's still missing — typically blue-chips like ETH/SOL
+  // that were resolved by Alchemy by-symbol or CoinGecko-by-id).
+  if (needChange.length > 0) {
+    try {
+      const currentPrices: Record<string, number> = {};
+      for (const sym of needChange) currentPrices[sym] = out[sym].priceUsd;
+      const al = await getAlchemyChange24hBySymbol(currentPrices);
+      for (const sym of Object.keys(al)) {
+        if (out[sym] && out[sym].change24h == null) {
+          out[sym] = { ...out[sym], change24h: al[sym] };
+        }
+      }
+    } catch {
+      // non-fatal
     }
   }
 

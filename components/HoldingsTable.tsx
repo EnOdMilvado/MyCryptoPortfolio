@@ -4,7 +4,6 @@ import { useMemo, useState } from "react";
 import { CHAIN_LABEL, type ChainId } from "@/lib/chains/types";
 import { formatAmount, formatBtc } from "@/lib/format";
 import { isLikelySpam } from "@/lib/spam";
-import { ChainPill } from "./ChainPill";
 import { CmcLink } from "./CmcLink";
 import { CopyButton } from "./CopyButton";
 import { tokenExplorerUrl } from "@/lib/chains/explorers";
@@ -116,7 +115,7 @@ function buildColumns(btcPriceUsd: number | null | undefined): ColumnDef[] {
       filterValue: (r) =>
         `${r.symbol ?? ""} ${r.name ?? ""}`.toLowerCase(),
       render: (r) => (
-        <div className="min-w-0 max-w-[7rem]">
+        <div className="min-w-0 max-w-[5rem]">
           <div className="font-semibold truncate" title={r.symbol ?? ""}>
             {r.symbol ?? "—"}
           </div>
@@ -219,8 +218,7 @@ function buildColumns(btcPriceUsd: number | null | undefined): ColumnDef[] {
       filterValue: (r) =>
         `${r.walletName} ${CHAIN_LABEL[r.chain]}`.toLowerCase(),
       render: (r) => (
-        <div className="flex items-center gap-1.5 min-w-0 max-w-[10rem]">
-          <ChainPill chain={r.chain} size="xs" />
+        <div className="min-w-0 max-w-[10rem]">
           <span className="text-sm truncate" title={r.walletName}>
             {r.walletName}
           </span>

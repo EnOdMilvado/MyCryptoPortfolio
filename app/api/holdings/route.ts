@@ -97,8 +97,15 @@ export async function POST(request: Request) {
   }
 
   // Persist to cache: delete previous rows, insert fresh ones in one round trip.
+  //
+  // IMPORTANT: only delete + replace when the fetch actually SUCCEEDED.
+  // If a wallet's chain query failed (Alchemy down / key missing / RPC
+  // error → r.error set), we skip the wipe — otherwise a transient
+  // network blip would obliterate the user's last-known holdings cache
+  // (which has happened in practice and wiped 6-figure RAIN/GEMS rows).
   const insertedAt = new Date().toISOString();
   for (const r of results) {
+    if (r.error) continue; // preserve stale cache rather than blanking it
     await supabase.from("crypto_holdings_cache").delete().eq("wallet_id", r.walletId);
     if (r.holdings.length > 0) {
       await supabase.from("crypto_holdings_cache").insert(

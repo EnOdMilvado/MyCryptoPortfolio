@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import { Inter } from "next/font/google";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { HideBalanceProvider } from "@/components/HideBalanceProvider";
@@ -39,10 +40,15 @@ const themeBootstrap = `
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" dir="ltr" className={inter.variable} suppressHydrationWarning>
-      <head>
-        <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} />
-      </head>
       <body className="font-sans text-text antialiased">
+        {/* Theme bootstrap: runs before paint via next/script + the
+            beforeInteractive strategy, replacing a raw <script> tag in
+            <head> (Next 16 + React 19 flags raw <script> as an error). */}
+        <Script
+          id="theme-bootstrap"
+          strategy="beforeInteractive"
+          dangerouslySetInnerHTML={{ __html: themeBootstrap }}
+        />
         <ThemeProvider>
           <HideBalanceProvider>{children}</HideBalanceProvider>
         </ThemeProvider>

@@ -239,6 +239,13 @@ async function resolveTokenPrices(
       }
     }
   }
+  // NOTE: Alchemy Historical (1 req/token) is intentionally NOT called here.
+  // For wallets with hundreds of tokens across 28 chains, that path adds
+  // tens of seconds per wallet and tipped the function past its 60s
+  // maxDuration limit — wiping 20+ wallets' worth of holdings (see the
+  // RAIN/GEMS incident on 2026-05-27). The historical backfill now lives
+  // exclusively in /api/holdings/backfill-24h, where it can run scoped to
+  // tokens that need it without re-fetching balances.
 
   return merged;
 }

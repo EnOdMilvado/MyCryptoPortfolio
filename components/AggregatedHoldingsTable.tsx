@@ -390,7 +390,6 @@ export function AggregatedHoldingsTable({
                   active={sortKey === "change24h"}
                   dir={sortDir}
                   onClick={() => toggleSort("change24h")}
-                  align="end"
                 />
               </th>
               <th className="hidden sm:table-cell px-2 py-2.5 text-left">
