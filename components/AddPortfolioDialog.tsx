@@ -5,7 +5,14 @@ import { useRouter } from "next/navigation";
 import { Modal } from "./Modal";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 
-export function AddPortfolioDialog() {
+interface AddPortfolioDialogProps {
+  /** Override the trigger button's classes. Default: btn-primary.
+   *  Use this when the dialog is rendered alongside other narrow buttons
+   *  that need to share a stacked column width. */
+  triggerClassName?: string;
+}
+
+export function AddPortfolioDialog({ triggerClassName }: AddPortfolioDialogProps = {}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
@@ -41,7 +48,11 @@ export function AddPortfolioDialog() {
 
   return (
     <>
-      <button type="button" className="btn-primary" onClick={() => setOpen(true)}>
+      <button
+        type="button"
+        className={triggerClassName ?? "btn-primary"}
+        onClick={() => setOpen(true)}
+      >
         + New portfolio
       </button>
       <Modal open={open} onClose={() => setOpen(false)} title="New portfolio">

@@ -7,13 +7,18 @@ import { formatRelative } from "@/lib/format";
 interface Props {
   walletIds: string[];
   lastFetchedAt: string | null;
+  /** Render the two action buttons stacked + full-width inside a narrow
+   *  parent column (used by the dashboard header so the "24h fill",
+   *  "Refresh all" and "+ New portfolio" buttons all line up at the
+   *  same width one above the other). Default: side-by-side. */
+  compact?: boolean;
 }
 
 // Refresh in chunks to keep each /api/holdings request under the function
 // timeout when the user has many wallets.
 const CHUNK_SIZE = 5;
 
-export function RefreshAllButton({ walletIds, lastFetchedAt }: Props) {
+export function RefreshAllButton({ walletIds, lastFetchedAt, compact = false }: Props) {
   const router = useRouter();
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
@@ -122,14 +127,27 @@ export function RefreshAllButton({ walletIds, lastFetchedAt }: Props) {
       ? `Last refreshed ${formatRelative(lastFetchedAt)}`
       : "Never refreshed";
 
+  // Compact mode: stacked buttons + smaller padding/text so they sit
+  // flush with the "+ New portfolio" button stacked beneath them.
+  // Default mode: keep the original horizontal pair used elsewhere.
+  const wrapClass = compact
+    ? "flex flex-col items-stretch gap-1.5 w-full"
+    : "flex flex-col items-end gap-1";
+  const rowClass = compact
+    ? "flex flex-col items-stretch gap-1.5"
+    : "flex items-center gap-2";
+  const btnBase = compact
+    ? "btn-ghost text-xs !px-3 !py-1.5 w-full"
+    : "btn-ghost";
+
   return (
-    <div className="flex flex-col items-end gap-1">
-      <div className="flex items-center gap-2">
+    <div className={wrapClass}>
+      <div className={rowClass}>
         <button
           type="button"
           onClick={backfillOnly}
           disabled={running}
-          className="btn-ghost text-xs"
+          className={`${btnBase} ${compact ? "" : "text-xs"}`}
           title="Fill missing 24h % changes (CoinGecko + DexScreener + Alchemy Historical) without re-fetching balances"
         >
           24h fill
@@ -138,7 +156,7 @@ export function RefreshAllButton({ walletIds, lastFetchedAt }: Props) {
           type="button"
           onClick={refresh}
           disabled={running || walletIds.length === 0}
-          className={`btn-ghost ${isStale && !running ? "ring-2 ring-primary/40" : ""}`}
+          className={`${btnBase} ${isStale && !running ? "ring-2 ring-primary/40" : ""}`}
           title={
             walletIds.length === 0
               ? "Add a wallet first"
@@ -146,8 +164,8 @@ export function RefreshAllButton({ walletIds, lastFetchedAt }: Props) {
           }
         >
           <svg
-            width="16"
-            height="16"
+            width={compact ? 14 : 16}
+            height={compact ? 14 : 16}
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -164,7 +182,7 @@ export function RefreshAllButton({ walletIds, lastFetchedAt }: Props) {
         </button>
       </div>
       <span
-        className={`text-xs ${error ? "text-danger" : isStale ? "text-primary" : "text-text-muted"}`}
+        className={`text-[10px] ${compact ? "text-center" : "text-xs"} ${error ? "text-danger" : isStale ? "text-primary" : "text-text-muted"}`}
       >
         {error ?? statusLabel}
       </span>

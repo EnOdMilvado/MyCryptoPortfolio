@@ -633,14 +633,17 @@ function DashboardHeader({
       totalBtc={totalBtc}
       middleSlot={<HeaderHighlights topGainers={topGainers} />}
       extra={
-        <div className="flex flex-col items-end gap-3">
+        // Narrow stacked column so 24h-fill / Refresh-all / status /
+        // + New portfolio all sit at the same width, one above the next.
+        <div className="flex flex-col items-stretch gap-2 w-36">
           {allWalletIds.length > 0 && (
             <RefreshAllButton
               walletIds={allWalletIds}
               lastFetchedAt={oldestFetchedAt}
+              compact
             />
           )}
-          <AddPortfolioDialog />
+          <AddPortfolioDialog triggerClassName="btn-primary text-xs !px-3 !py-1.5 w-full" />
         </div>
       }
     />
