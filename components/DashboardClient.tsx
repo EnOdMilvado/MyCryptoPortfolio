@@ -44,6 +44,10 @@ interface Props {
   btcPriceUsd: number | null;
   oldestFetchedAt: string | null;
   snapshots: Snapshot[];
+  /** CMC Fear & Greed + Altcoin Season — fetched server-side, may be null
+   *  if upstream was unreachable. ChangeCards renders gracefully either way. */
+  fearGreed?: import("@/lib/market/sentiment").FearGreed | null;
+  altcoinSeason?: import("@/lib/market/sentiment").AltcoinSeason | null;
   nftSummary?: NftSummary;
   /** Slot rendered above the big tables (e.g. exchanges & off-chain). */
   beforeTables?: ReactNode;
@@ -59,6 +63,8 @@ export function DashboardClient({
   btcPriceUsd,
   oldestFetchedAt,
   snapshots,
+  fearGreed = null,
+  altcoinSeason = null,
   nftSummary,
   beforeTables,
 }: Props) {
@@ -251,7 +257,11 @@ export function DashboardClient({
 
       {portfolioSummaries.length === 0 ? (
         <>
-          <ChangeCards snapshots={snapshots} />
+          <ChangeCards
+            snapshots={snapshots}
+            fearGreed={fearGreed}
+            altcoinSeason={altcoinSeason}
+          />
           <div className="card text-center animate-fade-up">
             <p className="text-text-muted">No portfolios yet. Let&apos;s create your first one!</p>
             <div className="mt-4">
@@ -262,6 +272,8 @@ export function DashboardClient({
       ) : (
         <DashboardSections
           snapshots={snapshots}
+          fearGreed={fearGreed}
+          altcoinSeason={altcoinSeason}
           includedHoldings={includedHoldings}
           btcPriceUsd={btcPriceUsd}
           portfolios={portfolios}
@@ -297,6 +309,8 @@ export function DashboardClient({
  */
 function DashboardSections({
   snapshots,
+  fearGreed,
+  altcoinSeason,
   includedHoldings,
   btcPriceUsd,
   portfolios,
@@ -319,6 +333,8 @@ function DashboardSections({
   beforeTables,
 }: {
   snapshots: Snapshot[];
+  fearGreed?: import("@/lib/market/sentiment").FearGreed | null;
+  altcoinSeason?: import("@/lib/market/sentiment").AltcoinSeason | null;
   includedHoldings: HoldingRow[];
   btcPriceUsd: number | null;
   portfolios: PortfolioMeta[];
@@ -455,7 +471,17 @@ function DashboardSections({
   );
 
   const sections: PageSection[] = [];
-  sections.push({ id: "change-cards", label: "Changes", node: <ChangeCards snapshots={snapshots} /> });
+  sections.push({
+    id: "change-cards",
+    label: "Changes",
+    node: (
+      <ChangeCards
+        snapshots={snapshots}
+        fearGreed={fearGreed}
+        altcoinSeason={altcoinSeason}
+      />
+    ),
+  });
   if (includedHoldings.length > 0) {
     sections.push({
       id: "overview",

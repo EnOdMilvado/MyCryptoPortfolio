@@ -5,7 +5,9 @@ import { useHideBalance } from "./HideBalanceProvider";
 import { useAllHoldings } from "./AllHoldingsView";
 import { resolveCoinColor, CHART_COLORS, OTHER_COLOR } from "./PieChart";
 import { useTheme } from "./ThemeProvider";
+import { SentimentCards } from "./SentimentCards";
 import { formatUsd } from "@/lib/format";
+import type { FearGreed, AltcoinSeason } from "@/lib/market/sentiment";
 
 export interface Snapshot {
   capturedAt: string;
@@ -18,15 +20,26 @@ interface Period {
   ms: number;
 }
 
-// 1Y is replaced by the allocation donut card below — keep only the trio
-// of period-based changes here.
+// 30d and 3m cards were replaced with CMC sentiment widgets (Fear & Greed
+// + Altcoin Season) per user request — the snapshot-based percentages
+// over those long windows were rarely informative since most users only
+// started seeing snapshots fill in over the past few weeks. The 24h card
+// stays because it's the only one we have reliable data for from day 1.
 const PERIODS: Period[] = [
   { key: "24h", label: "24h", ms: 24 * 60 * 60 * 1000 },
-  { key: "30d", label: "30d", ms: 30 * 24 * 60 * 60 * 1000 },
-  { key: "3m", label: "3m", ms: 90 * 24 * 60 * 60 * 1000 },
 ];
 
-export function ChangeCards({ snapshots }: { snapshots: Snapshot[] }) {
+interface ChangeCardsProps {
+  snapshots: Snapshot[];
+  fearGreed?: FearGreed | null;
+  altcoinSeason?: AltcoinSeason | null;
+}
+
+export function ChangeCards({
+  snapshots,
+  fearGreed = null,
+  altcoinSeason = null,
+}: ChangeCardsProps) {
   const { hidden } = useHideBalance();
   const sorted = useMemo(
     () =>
@@ -37,16 +50,19 @@ export function ChangeCards({ snapshots }: { snapshots: Snapshot[] }) {
     [snapshots],
   );
 
-  if (sorted.length === 0) {
+  // Show the row even when we have no snapshots — the sentiment cards
+  // don't depend on user data and should always render so the layout
+  // doesn't collapse on first-load.
+  if (sorted.length === 0 && fearGreed == null && altcoinSeason == null) {
     return null;
   }
 
-  const latest = sorted[sorted.length - 1];
-  const now = new Date(latest.capturedAt).getTime();
+  const latest = sorted[sorted.length - 1] ?? null;
+  const now = latest ? new Date(latest.capturedAt).getTime() : Date.now();
 
   return (
     <section className="grid grid-cols-2 lg:grid-cols-4 gap-4 animate-fade-up">
-      {PERIODS.map((p) => {
+      {latest && PERIODS.map((p) => {
         const cutoff = now - p.ms;
         const inWindow = sorted.filter(
           (s) => new Date(s.capturedAt).getTime() >= cutoff,
@@ -115,6 +131,8 @@ export function ChangeCards({ snapshots }: { snapshots: Snapshot[] }) {
           </div>
         );
       })}
+
+      <SentimentCards fearGreed={fearGreed} altcoinSeason={altcoinSeason} />
 
       <AllocationDonutCard />
     </section>

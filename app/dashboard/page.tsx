@@ -10,6 +10,7 @@ import {
 import { NftSummaryTile } from "@/components/NftSummaryTile";
 import type { HoldingRow } from "@/components/HoldingsTable";
 import type { ChainId } from "@/lib/chains/types";
+import { getMarketSentiment } from "@/lib/market/sentiment";
 
 export const dynamic = "force-dynamic";
 
@@ -216,6 +217,11 @@ export default async function DashboardPage() {
     totalUsd: Number(s.total_usd),
   }));
 
+  // Market-sentiment widgets (CMC F&G + Altcoin Season). Public data-api,
+  // no key required, 5-min revalidate. A failure leaves the cards in their
+  // "No data" state — never blocks the dashboard.
+  const sentiment = await getMarketSentiment();
+
   // NFT summary (aggregated across all wallets).
   const { data: nftRows } = await supabase
     .from("crypto_nfts_cache")
@@ -253,6 +259,8 @@ export default async function DashboardPage() {
           btcPriceUsd={btcPriceUsd}
           oldestFetchedAt={oldestFetchedAt}
           snapshots={snapshots}
+          fearGreed={sentiment.fearGreed}
+          altcoinSeason={sentiment.altcoinSeason}
           nftSummary={nftSummary}
           beforeTables={<ExchangesAndOffchain key="exchanges-card" exchanges={exchanges} offchain={offchain} />}
         />
