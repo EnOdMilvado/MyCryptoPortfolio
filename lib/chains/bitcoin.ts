@@ -1,6 +1,7 @@
 import type { Holding } from "./types";
 import { NATIVE_DECIMALS, NATIVE_SYMBOL } from "./types";
 import { getNativePricesWithChange } from "./prices";
+import { getAlchemyPricesBySymbol } from "./alchemy_prices";
 
 interface BlockstreamAddress {
   chain_stats: { funded_txo_sum: number; spent_txo_sum: number };
@@ -27,9 +28,20 @@ export async function fetchBitcoinHoldings(address: string): Promise<Holding[]> 
 
   if (amount <= 0) return [];
 
-  const prices = await getNativePricesWithChange(["bitcoin"]);
-  const priceUsd = prices.bitcoin?.usd ?? null;
-  const change = prices.bitcoin?.change24h ?? null;
+  // Two-tier price lookup, same pattern as EVM/Solana native prices:
+  //   1) Alchemy Prices by symbol — reliable from serverless (auth'd) but
+  //      no 24h change available.
+  //   2) CoinGecko free tier — gives 24h change, but rate-limits hard
+  //      from shared Vercel IPs and was silently returning null, leaving
+  //      BTC holdings with priceUsd=null → valueUsd=0 (looked like BTC
+  //      "disappeared" from the dashboard).
+  // Run in parallel and merge: Alchemy wins for usd, CoinGecko fills change.
+  const [alchemy, cg] = await Promise.all([
+    getAlchemyPricesBySymbol(["BTC"]),
+    getNativePricesWithChange(["bitcoin"]),
+  ]);
+  const priceUsd = alchemy.BTC ?? cg.bitcoin?.usd ?? null;
+  const change = cg.bitcoin?.change24h ?? null;
 
   return [
     {

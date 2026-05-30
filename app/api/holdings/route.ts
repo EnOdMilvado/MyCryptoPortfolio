@@ -5,6 +5,7 @@ import { fetchBitcoinHoldings } from "@/lib/chains/bitcoin";
 import { AlchemyKeyMissingError, fetchEvmHoldings } from "@/lib/chains/evm";
 import { fetchSolanaHoldings } from "@/lib/chains/solana";
 import { getNativePrices } from "@/lib/chains/prices";
+import { getAlchemyPricesBySymbol } from "@/lib/chains/alchemy_prices";
 import type { ChainType, Holding, WalletHoldings } from "@/lib/chains/types";
 
 export const dynamic = "force-dynamic";
@@ -153,7 +154,15 @@ export async function POST(request: Request) {
     captured_at: insertedAt,
   });
 
-  const btcPrices = await getNativePrices(["bitcoin"]);
+  // Top-of-page BTC price tile: try Alchemy first (auth'd, reliable from
+  // Vercel) and fall back to CoinGecko free tier. Same reason as in
+  // bitcoin.ts — CoinGecko frequently rate-limits the shared serverless
+  // IPs and was leaving btcPriceUsd null in the response.
+  const [btcAlchemy, btcCg] = await Promise.all([
+    getAlchemyPricesBySymbol(["BTC"]),
+    getNativePrices(["bitcoin"]),
+  ]);
+  const btcPriceUsd = btcAlchemy.BTC ?? btcCg.bitcoin ?? null;
 
   // Top-level signal: if *every* EVM wallet in this chunk failed with the
   // Alchemy-key marker, tell the UI explicitly so it can render one
@@ -166,7 +175,7 @@ export async function POST(request: Request) {
 
   return NextResponse.json({
     wallets: results,
-    btcPriceUsd: btcPrices.bitcoin ?? null,
+    btcPriceUsd,
     fetchedAt: insertedAt,
     configError: allEvmFailedOnKey
       ? "ALCHEMY_API_KEY is missing or empty in the server environment — EVM wallets cannot be read. Set it in Vercel → Settings → Environment Variables and redeploy."
