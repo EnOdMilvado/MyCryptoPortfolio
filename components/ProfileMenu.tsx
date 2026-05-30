@@ -95,6 +95,13 @@ export function ProfileMenu({ user }: { user: ProfileMenuUser }) {
             🏠 Dashboard
           </Link>
           <Link
+            href="/dashboard/wallets"
+            onClick={() => setOpen(false)}
+            className="block px-3 py-2 rounded-xl text-sm hover:bg-surface-2 transition"
+          >
+            💼 All wallets
+          </Link>
+          <Link
             href="/dashboard/nfts"
             onClick={() => setOpen(false)}
             className="block px-3 py-2 rounded-xl text-sm hover:bg-surface-2 transition"

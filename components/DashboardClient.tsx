@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { SummaryHeader } from "./SummaryHeader";
 import { PortfolioCard, type PortfolioSummary } from "./PortfolioCard";
 import { AddPortfolioDialog } from "./AddPortfolioDialog";
@@ -442,20 +443,42 @@ function DashboardSections({
   const allWalletIds = portfolios.flatMap((p) => p.walletIds);
   const walletTogglesNode = (
     <section className="card animate-fade-up space-y-3">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
         <h3 className="text-lg font-bold text-text">Disable individual wallets</h3>
-        {excludedWallets.size > 0 && (
-          <button
-            type="button"
-            onClick={() => {
-              setExcludedWallets(new Set());
-              persistWallets(new Set());
-            }}
-            className="btn-ghost text-xs"
+        <div className="flex items-center gap-2">
+          {excludedWallets.size > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                setExcludedWallets(new Set());
+                persistWallets(new Set());
+              }}
+              className="btn-ghost text-xs"
+            >
+              Re-enable all
+            </button>
+          )}
+          <Link
+            href="/dashboard/wallets"
+            className="btn-ghost text-xs inline-flex items-center gap-1"
+            title="See all wallets with full holdings and transaction history"
           >
-            Re-enable all
-          </button>
-        )}
+            All wallets
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
+          </Link>
+        </div>
       </div>
       <p className="text-xs text-text-muted">
         Toggle a wallet to remove it from the dashboard total, pie and tables.
