@@ -24,6 +24,12 @@ export function RefreshAllButton({ walletIds, lastFetchedAt }: Props) {
     setRunning(true);
     setError(null);
     setProgress({ done: 0, total: walletIds.length });
+    // Collect per-wallet errors across chunks; HTTP 200 from /api/holdings
+    // does NOT mean every wallet succeeded — individual failures (e.g.
+    // missing Alchemy key, RPC down) are returned inside each
+    // WalletHoldings.error field and used to be dropped on the floor.
+    let configError: string | null = null;
+    const walletErrors: { id: string; chain: string; msg: string }[] = [];
     try {
       for (let i = 0; i < walletIds.length; i += CHUNK_SIZE) {
         const chunk = walletIds.slice(i, i + CHUNK_SIZE);
@@ -32,9 +38,27 @@ export function RefreshAllButton({ walletIds, lastFetchedAt }: Props) {
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ walletIds: chunk }),
         });
+        const json = (await res.json().catch(() => null)) as
+          | {
+              error?: string;
+              configError?: string | null;
+              wallets?: {
+                walletId: string;
+                chainType: string;
+                error?: string;
+              }[];
+            }
+          | null;
         if (!res.ok) {
-          const json = (await res.json().catch(() => null)) as { error?: string } | null;
           throw new Error(json?.error ?? `Chunk failed (${res.status})`);
+        }
+        // Hoist the first configError we see — every chunk reports it
+        // independently so any one is enough.
+        if (!configError && json?.configError) configError = json.configError;
+        for (const w of json?.wallets ?? []) {
+          if (w.error) {
+            walletErrors.push({ id: w.walletId, chain: w.chainType, msg: w.error });
+          }
         }
         setProgress({ done: Math.min(i + CHUNK_SIZE, walletIds.length), total: walletIds.length });
       }
@@ -45,6 +69,17 @@ export function RefreshAllButton({ walletIds, lastFetchedAt }: Props) {
         await fetch("/api/holdings/backfill-24h", { method: "POST" });
       } catch {
         // non-fatal
+      }
+      if (configError) {
+        setError(configError);
+      } else if (walletErrors.length > 0) {
+        // Prefer to show the most common error message + affected count.
+        const counts = new Map<string, number>();
+        for (const e of walletErrors) counts.set(e.msg, (counts.get(e.msg) ?? 0) + 1);
+        const [topMsg, topCount] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+        setError(
+          `${walletErrors.length}/${walletIds.length} wallets failed — ${topCount}× "${topMsg}"`,
+        );
       }
       router.refresh();
     } catch (e) {

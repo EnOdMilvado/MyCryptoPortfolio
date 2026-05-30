@@ -22,9 +22,27 @@ import {
   decodeAbiUint8,
 } from "./erc20_eth_call";
 
+/**
+ * Sentinel error class — lets the route distinguish "config broken, no point
+ * retrying" from a transient Alchemy/network failure. Used to drive the
+ * top-level configError signal sent back to the UI.
+ */
+export class AlchemyKeyMissingError extends Error {
+  constructor() {
+    super("ALCHEMY_API_KEY missing or empty");
+    this.name = "AlchemyKeyMissingError";
+  }
+}
+
 function endpoint(chain: EvmChain): string {
   const key = process.env.ALCHEMY_API_KEY;
-  if (!key) throw new Error("Missing ALCHEMY_API_KEY");
+  // Treat empty string the same as missing. A `""` value (which we have
+  // actually seen in production after a botched `vercel env add`) is falsy
+  // but had been logged ambiguously as just "Missing ALCHEMY_API_KEY" —
+  // making the cause hard to spot in Vercel logs.
+  if (!key || key.trim() === "") {
+    throw new AlchemyKeyMissingError();
+  }
   return `https://${ALCHEMY_EVM_SUBDOMAIN[chain]}.g.alchemy.com/v2/${key}`;
 }
 
@@ -365,8 +383,18 @@ async function fetchSingleEvmChain(
 /**
  * Query every supported EVM chain in parallel and return a flat list of
  * non-zero holdings.
+ *
+ * Fails fast with AlchemyKeyMissingError if the env var is missing/empty,
+ * rather than silently returning [] after 27 chains each independently
+ * threw the same error inside Promise.allSettled (which is what used to
+ * happen — and how 20 wallets ended up showing 0 holdings on production
+ * with no visible signal).
  */
 export async function fetchEvmHoldings(address: string): Promise<Holding[]> {
+  const key = process.env.ALCHEMY_API_KEY;
+  if (!key || key.trim() === "") {
+    throw new AlchemyKeyMissingError();
+  }
   const results = await Promise.allSettled(
     EVM_CHAINS.map((c) => fetchSingleEvmChain(c, address)),
   );

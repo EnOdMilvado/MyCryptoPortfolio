@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
 import { detectChain } from "@/lib/chains/detect";
 import { fetchBitcoinHoldings } from "@/lib/chains/bitcoin";
-import { fetchEvmHoldings } from "@/lib/chains/evm";
+import { AlchemyKeyMissingError, fetchEvmHoldings } from "@/lib/chains/evm";
 import { fetchSolanaHoldings } from "@/lib/chains/solana";
 import { getNativePrices } from "@/lib/chains/prices";
 import type { ChainType, Holding, WalletHoldings } from "@/lib/chains/types";
@@ -43,13 +43,24 @@ async function fetchForWallet(w: WalletRow): Promise<WalletHoldings> {
       totalUsd,
     };
   } catch (e) {
+    const msg = e instanceof Error ? e.message : "fetch failed";
+    // Surface failures in the Vercel function log so we don't have to
+    // root-cause from "all wallets show 0 again". Specifically tag the
+    // Alchemy key case since it's the only one fixable without code.
+    if (e instanceof AlchemyKeyMissingError) {
+      console.error(
+        `[holdings] EVM wallet ${w.id} (${w.address}): ALCHEMY_API_KEY missing/empty in process env`,
+      );
+    } else {
+      console.error(`[holdings] wallet ${w.id} (${w.chain_type}) failed:`, msg);
+    }
     return {
       walletId: w.id,
       address: w.address,
       chainType: w.chain_type,
       holdings: [],
       totalUsd: 0,
-      error: e instanceof Error ? e.message : "fetch failed",
+      error: msg,
     };
   }
 }
@@ -143,9 +154,22 @@ export async function POST(request: Request) {
   });
 
   const btcPrices = await getNativePrices(["bitcoin"]);
+
+  // Top-level signal: if *every* EVM wallet in this chunk failed with the
+  // Alchemy-key marker, tell the UI explicitly so it can render one
+  // actionable banner instead of N silent zeros. We mark by exact message
+  // since the discriminator class doesn't cross the JSON boundary.
+  const evmResults = results.filter((r) => r.chainType === "evm");
+  const allEvmFailedOnKey =
+    evmResults.length > 0 &&
+    evmResults.every((r) => r.error === "ALCHEMY_API_KEY missing or empty");
+
   return NextResponse.json({
     wallets: results,
     btcPriceUsd: btcPrices.bitcoin ?? null,
     fetchedAt: insertedAt,
+    configError: allEvmFailedOnKey
+      ? "ALCHEMY_API_KEY is missing or empty in the server environment — EVM wallets cannot be read. Set it in Vercel → Settings → Environment Variables and redeploy."
+      : null,
   });
 }
