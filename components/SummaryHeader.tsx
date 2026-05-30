@@ -8,12 +8,17 @@ export function SummaryHeader({
   subtitle,
   totalUsd,
   totalBtc,
+  middleSlot,
   extra,
 }: {
   title: string;
   subtitle?: React.ReactNode;
   totalUsd: number;
   totalBtc: number;
+  /** Optional widget that sits between the totals (left) and the action
+   *  buttons (right). Hidden on mobile via `hidden md:flex` in the slot
+   *  itself — the header on small screens stays simple. */
+  middleSlot?: React.ReactNode;
   extra?: React.ReactNode;
 }) {
   const { hidden, toggle } = useHideBalance();
@@ -55,6 +60,7 @@ export function SummaryHeader({
             className="mt-1 block text-sm sm:text-lg text-text-muted tabular"
           />
         </div>
+        {middleSlot}
         {extra && <div className="flex items-center gap-2 w-full sm:w-auto">{extra}</div>}
       </div>
     </section>

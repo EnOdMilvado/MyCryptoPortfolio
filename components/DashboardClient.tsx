@@ -13,6 +13,7 @@ import {
 import { AggregatedHoldingsTable } from "./AggregatedHoldingsTable";
 import { RefreshAllButton } from "./RefreshAllButton";
 import { ChangeCards, type Snapshot } from "./ChangeCards";
+import { HeaderHighlights } from "./HeaderHighlights";
 import { NftSummaryTile, type NftSummary } from "./NftSummaryTile";
 import { PortfolioListItem } from "./PortfolioListItem";
 import { SortableGrid } from "./SortableGrid";
@@ -253,6 +254,7 @@ export function DashboardClient({
         btcPriceUsd={btcPriceUsd}
         allWalletIds={allWalletIds}
         oldestFetchedAt={oldestFetchedAt}
+        snapshots={snapshots}
       />
 
       {portfolioSummaries.length === 0 ? (
@@ -534,6 +536,7 @@ function DashboardHeader({
   btcPriceUsd,
   allWalletIds,
   oldestFetchedAt,
+  snapshots,
 }: {
   email: string;
   excludedPortfolios: Set<string>;
@@ -541,6 +544,7 @@ function DashboardHeader({
   btcPriceUsd: number | null;
   allWalletIds: string[];
   oldestFetchedAt: string | null;
+  snapshots: Snapshot[];
 }) {
   const { includedRows, cleanRows, hydrated } = useAllHoldings();
   // Pre-hydration the excluded set isn't loaded yet, so render the
@@ -549,6 +553,45 @@ function DashboardHeader({
   const totalUsd = effectiveRows.reduce((s, r) => s + r.valueUsd, 0);
   const totalBtc = btcPriceUsd ? totalUsd / btcPriceUsd : 0;
   const perHoldingExcluded = Math.max(cleanRows.length - includedRows.length, 0);
+
+  // Top movers for the header switcher: aggregate per-symbol so multiple
+  // wallets holding the same asset only show once. Filter out dust
+  // (< $50) so airdrop spam doesn't dominate, then take the 3 largest
+  // absolute 24h moves. We use signed `change24h` for display, abs only
+  // for ranking — so you see whoever moved most regardless of direction.
+  const topMovers = useMemo<import("./HeaderHighlights").HeaderMover[]>(() => {
+    const bySymbol = new Map<
+      string,
+      { value: number; change: number | null; color: string | null }
+    >();
+    for (const r of effectiveRows) {
+      if (r.valueUsd < 50) continue;
+      if (r.priceChange24h == null) continue;
+      const sym = (r.symbol ?? "").trim().toUpperCase();
+      if (!sym) continue;
+      const cur = bySymbol.get(sym);
+      if (cur) {
+        cur.value += r.valueUsd;
+        // Same symbol across chains should already share a 24h change;
+        // keep the first non-null we see.
+        if (cur.change == null) cur.change = r.priceChange24h;
+      } else {
+        bySymbol.set(sym, {
+          value: r.valueUsd,
+          change: r.priceChange24h,
+          color: null,
+        });
+      }
+    }
+    const arr: import("./HeaderHighlights").HeaderMover[] = [];
+    for (const [symbol, info] of bySymbol) {
+      if (info.change == null) continue;
+      arr.push({ symbol, change24h: info.change, color: info.color });
+    }
+    arr.sort((a, b) => Math.abs(b.change24h) - Math.abs(a.change24h));
+    return arr.slice(0, 3);
+  }, [effectiveRows]);
+
   return (
     <SummaryHeader
       title="All portfolios"
@@ -571,6 +614,13 @@ function DashboardHeader({
       }
       totalUsd={totalUsd}
       totalBtc={totalBtc}
+      middleSlot={
+        <HeaderHighlights
+          snapshots={snapshots}
+          currentTotalUsd={totalUsd}
+          topMovers={topMovers}
+        />
+      }
       extra={
         <div className="flex flex-col items-end gap-3">
           {allWalletIds.length > 0 && (
