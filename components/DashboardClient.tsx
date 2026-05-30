@@ -254,7 +254,6 @@ export function DashboardClient({
         btcPriceUsd={btcPriceUsd}
         allWalletIds={allWalletIds}
         oldestFetchedAt={oldestFetchedAt}
-        snapshots={snapshots}
       />
 
       {portfolioSummaries.length === 0 ? (
@@ -536,7 +535,6 @@ function DashboardHeader({
   btcPriceUsd,
   allWalletIds,
   oldestFetchedAt,
-  snapshots,
 }: {
   email: string;
   excludedPortfolios: Set<string>;
@@ -544,7 +542,6 @@ function DashboardHeader({
   btcPriceUsd: number | null;
   allWalletIds: string[];
   oldestFetchedAt: string | null;
-  snapshots: Snapshot[];
 }) {
   const { includedRows, cleanRows, hydrated } = useAllHoldings();
   // Pre-hydration the excluded set isn't loaded yet, so render the
@@ -554,26 +551,23 @@ function DashboardHeader({
   const totalBtc = btcPriceUsd ? totalUsd / btcPriceUsd : 0;
   const perHoldingExcluded = Math.max(cleanRows.length - includedRows.length, 0);
 
-  // Top movers for the header switcher: aggregate per-symbol so multiple
-  // wallets holding the same asset only show once. Filter out dust
-  // (< $50) so airdrop spam doesn't dominate, then take the 3 largest
-  // absolute 24h moves. We use signed `change24h` for display, abs only
-  // for ranking — so you see whoever moved most regardless of direction.
-  const topMovers = useMemo<import("./HeaderHighlights").HeaderMover[]>(() => {
+  // Top gainers for the header widget: positive-only, ranked by 24h %
+  // gain, take top 9. Aggregated per-symbol so multi-chain assets count
+  // once. Dust filter (< $50) keeps airdrop spam (which routinely shows
+  // +9999% on illiquid pools) out of the headline.
+  const topGainers = useMemo<import("./HeaderHighlights").HeaderMover[]>(() => {
     const bySymbol = new Map<
       string,
       { value: number; change: number | null; color: string | null }
     >();
     for (const r of effectiveRows) {
       if (r.valueUsd < 50) continue;
-      if (r.priceChange24h == null) continue;
+      if (r.priceChange24h == null || r.priceChange24h <= 0) continue;
       const sym = (r.symbol ?? "").trim().toUpperCase();
       if (!sym) continue;
       const cur = bySymbol.get(sym);
       if (cur) {
         cur.value += r.valueUsd;
-        // Same symbol across chains should already share a 24h change;
-        // keep the first non-null we see.
         if (cur.change == null) cur.change = r.priceChange24h;
       } else {
         bySymbol.set(sym, {
@@ -588,8 +582,8 @@ function DashboardHeader({
       if (info.change == null) continue;
       arr.push({ symbol, change24h: info.change, color: info.color });
     }
-    arr.sort((a, b) => Math.abs(b.change24h) - Math.abs(a.change24h));
-    return arr.slice(0, 3);
+    arr.sort((a, b) => b.change24h - a.change24h);
+    return arr.slice(0, 9);
   }, [effectiveRows]);
 
   return (
@@ -614,13 +608,7 @@ function DashboardHeader({
       }
       totalUsd={totalUsd}
       totalBtc={totalBtc}
-      middleSlot={
-        <HeaderHighlights
-          snapshots={snapshots}
-          currentTotalUsd={totalUsd}
-          topMovers={topMovers}
-        />
-      }
+      middleSlot={<HeaderHighlights topGainers={topGainers} />}
       extra={
         <div className="flex flex-col items-end gap-3">
           {allWalletIds.length > 0 && (
