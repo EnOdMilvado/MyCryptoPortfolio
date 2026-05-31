@@ -143,11 +143,27 @@ export function ExchangeDetailView({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ exchangeId, kinds: [TAB_TO_KIND[tab]] }),
       });
-      const json = (await res.json()) as {
+      // Defensive parsing: when the server function times out or 5xx's,
+      // Vercel returns an HTML/plain-text error page, not JSON. We used
+      // to call res.json() unconditionally and the user saw the cryptic
+      // `Unexpected token 'A', "An error o"... is not valid JSON`
+      // instead of the actual problem. Read text first, then parse.
+      const raw = await res.text();
+      let json: {
         error?: string;
         exchanges?: { errors?: { kind: string; error: string }[] }[];
-      };
-      if (!res.ok) throw new Error(json.error ?? "Refresh failed");
+      } = {};
+      try {
+        json = raw ? JSON.parse(raw) : {};
+      } catch {
+        const snippet = raw.replace(/<[^>]+>/g, " ").trim().slice(0, 200);
+        throw new Error(
+          res.ok
+            ? `Server returned non-JSON: ${snippet}`
+            : `Refresh failed (${res.status}) — likely a function timeout. ${snippet}`,
+        );
+      }
+      if (!res.ok) throw new Error(json.error ?? `Refresh failed (${res.status})`);
       const apiError = json.exchanges?.[0]?.errors?.find((e) => e.kind === TAB_TO_KIND[tab]);
       if (apiError) throw new Error(apiError.error);
       router.refresh();

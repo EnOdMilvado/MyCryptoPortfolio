@@ -196,6 +196,59 @@ async function fetchMexcUsdTickerMap(): Promise<Record<string, number>> {
   return out;
 }
 
+/**
+ * Returns the set of ALL valid spot trading pairs on MEXC right now.
+ * Used to pre-filter the deriveSymbols candidates before hitting
+ * the signed per-symbol endpoints (`/myTrades`, `/allOrders`) — without
+ * this filter, 95 spot assets × 4 default quotes × 3 time windows would
+ * produce >1000 sequential signed calls and tip the Vercel function past
+ * its 60-second timeout (which returns HTML, not JSON, and crashes the
+ * frontend's res.json()). Cached at the edge for 60 s.
+ */
+async function fetchMexcValidSymbolSet(): Promise<Set<string>> {
+  try {
+    const res = await fetch("https://api.mexc.com/api/v3/ticker/price", {
+      next: { revalidate: 60 },
+    });
+    if (!res.ok) return new Set();
+    const arr = (await res.json()) as MexcTicker[];
+    if (!Array.isArray(arr)) return new Set();
+    const out = new Set<string>();
+    for (const t of arr) {
+      const s = (t.symbol ?? "").toUpperCase();
+      if (s) out.add(s);
+    }
+    return out;
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * Run `worker(item)` over `items` with a max concurrency. Keeps the
+ * /myTrades and /allOrders sweeps inside the 60 s Vercel limit even
+ * when the user has dozens of trading pairs. We collect results in a
+ * stable order so callers can match index → input.
+ */
+async function mapWithConcurrency<T, U>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<U>,
+): Promise<U[]> {
+  const out: U[] = new Array(items.length);
+  let cursor = 0;
+  async function pump(): Promise<void> {
+    while (true) {
+      const i = cursor++;
+      if (i >= items.length) return;
+      out[i] = await worker(items[i], i);
+    }
+  }
+  const n = Math.max(1, Math.min(concurrency, items.length));
+  await Promise.all(Array.from({ length: n }, () => pump()));
+  return out;
+}
+
 interface MexcConvertItem {
   asset: string;
   balance: string;
@@ -259,6 +312,14 @@ export const mexcAdapter: ExchangeAdapter = {
       const spot = await this.fetchSpot(creds);
       symbols = deriveSymbols(spot.map((s) => s.asset));
     }
+    // Drop candidates that aren't actually listed on MEXC right now.
+    // Without this we'd waste an /myTrades request on every (asset)USDT,
+    // (asset)USDC, (asset)BTC, (asset)ETH for tokens that only trade vs
+    // one of those — multiplied by 95+ spot assets it blows the 60 s
+    // function budget. The valid-symbol set comes from the public
+    // ticker endpoint (cached 60 s) so this filter is essentially free.
+    const valid = await fetchMexcValidSymbolSet();
+    if (valid.size > 0) symbols = symbols.filter((s) => valid.has(s));
 
     const endMs = query.endTimeMs ?? Date.now();
     const startMs = query.startTimeMs ?? endMs - 90 * DAY_MS;
@@ -266,7 +327,10 @@ export const mexcAdapter: ExchangeAdapter = {
 
     const all: TradeRow[] = [];
     const seen = new Set<string>();
-    for (const symbol of symbols) {
+    // Run per-symbol sweeps in parallel batches. Concurrency=6 keeps us
+    // well under MEXC's 1200 req/min (weight 10 per call → 120 calls/min
+    // headroom) while cutting wall time ~6×.
+    await mapWithConcurrency(symbols, 6, async (symbol) => {
       for (const w of windows) {
         let trades: MexcTrade[];
         try {
@@ -277,7 +341,7 @@ export const mexcAdapter: ExchangeAdapter = {
           );
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
-          if (msg.includes("-1121") || msg.includes("Invalid symbol")) break; // skip whole symbol
+          if (msg.includes("-1121") || msg.includes("Invalid symbol")) return; // skip whole symbol
           continue; // try next window
         }
         if (!Array.isArray(trades)) continue;
@@ -304,7 +368,7 @@ export const mexcAdapter: ExchangeAdapter = {
           });
         }
       }
-    }
+    });
     return all;
   },
 
@@ -314,6 +378,9 @@ export const mexcAdapter: ExchangeAdapter = {
       const spot = await this.fetchSpot(creds);
       symbols = deriveSymbols(spot.map((s) => s.asset));
     }
+    // Same valid-symbol filter as fetchTrades — see comment there.
+    const valid = await fetchMexcValidSymbolSet();
+    if (valid.size > 0) symbols = symbols.filter((s) => valid.has(s));
 
     const endMs = query.endTimeMs ?? Date.now();
     const startMs = query.startTimeMs ?? endMs - 90 * DAY_MS;
@@ -325,12 +392,17 @@ export const mexcAdapter: ExchangeAdapter = {
     // "API key lacks permission for /allOrders" case (seen on real
     // MEXC accounts where Trades worked but Orders silently returned 0
     // because the key had read-only Spot scope but not Trade scope).
-    let totalAttempts = 0;
-    let totalErrors = 0;
-    let lastErrorMsg: string | null = null;
-    for (const symbol of symbols) {
+    // Closure-mutated diagnostics. Typed explicitly so TS doesn't narrow
+    // them to literal null/0 after the mapWithConcurrency call (it can't
+    // see writes inside the async callback).
+    const stats: { attempts: number; errors: number; lastMsg: string | null } = {
+      attempts: 0,
+      errors: 0,
+      lastMsg: null,
+    };
+    await mapWithConcurrency(symbols, 6, async (symbol) => {
       for (const w of windows) {
-        totalAttempts++;
+        stats.attempts++;
         let orders: MexcOrder[];
         try {
           orders = await signedGet<MexcOrder[]>(
@@ -340,9 +412,9 @@ export const mexcAdapter: ExchangeAdapter = {
           );
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
-          totalErrors++;
-          lastErrorMsg = msg;
-          if (msg.includes("-1121") || msg.includes("Invalid symbol")) break;
+          stats.errors++;
+          stats.lastMsg = msg;
+          if (msg.includes("-1121") || msg.includes("Invalid symbol")) return;
           // Log once per kind of error so Vercel logs surface "403" /
           // "-2015" (insufficient permission) instead of swallowing it.
           console.warn(`[mexc] /allOrders ${symbol} failed: ${msg.slice(0, 200)}`);
@@ -371,7 +443,7 @@ export const mexcAdapter: ExchangeAdapter = {
           });
         }
       }
-    }
+    });
     // If we returned zero orders AND every call failed identically (and
     // we tried more than a couple symbols), the API key almost certainly
     // doesn't have the right permission. Throw a clear message so the
@@ -379,12 +451,12 @@ export const mexcAdapter: ExchangeAdapter = {
     // silently storing 0.
     if (
       all.length === 0 &&
-      totalAttempts >= 3 &&
-      totalErrors === totalAttempts &&
-      lastErrorMsg
+      stats.attempts >= 3 &&
+      stats.errors === stats.attempts &&
+      stats.lastMsg
     ) {
       throw new Error(
-        `MEXC /allOrders failed for every symbol — likely API key permission issue. Last error: ${lastErrorMsg.slice(0, 200)}`,
+        `MEXC /allOrders failed for every symbol — likely API key permission issue. Last error: ${stats.lastMsg.slice(0, 200)}`,
       );
     }
     return all;
