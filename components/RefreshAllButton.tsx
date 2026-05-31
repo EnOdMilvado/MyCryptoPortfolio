@@ -75,6 +75,34 @@ export function RefreshAllButton({ walletIds, lastFetchedAt, compact = false }: 
       } catch {
         // non-fatal
       }
+      // Also refresh exchange spot balances (MEXC, HTX, …) so the
+      // dashboard total includes the latest exchange snapshot too.
+      // Best-effort: any failure here is reported but doesn't undo the
+      // wallet refresh that just succeeded. Limited to `kinds: ["spot"]`
+      // so we don't trigger the slow trades/orders/deposits sync on
+      // every dashboard refresh (those still have their own buttons in
+      // the per-exchange detail view).
+      setProgress(null);
+      try {
+        const res = await fetch("/api/exchanges/refresh", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ kinds: ["spot"] }),
+        });
+        if (!res.ok) {
+          const json = (await res.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(json?.error ?? `Exchange spot sync failed (${res.status})`);
+        }
+      } catch (e) {
+        // Surface as a soft warning if wallets otherwise succeeded.
+        if (walletErrors.length === 0 && !configError) {
+          setError(
+            `Wallets refreshed — exchange spot sync failed: ${
+              e instanceof Error ? e.message : "unknown"
+            }`,
+          );
+        }
+      }
       if (configError) {
         setError(configError);
       } else if (walletErrors.length > 0) {
