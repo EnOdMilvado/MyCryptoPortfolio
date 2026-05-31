@@ -90,7 +90,13 @@ interface MexcOrder {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const TRADE_WINDOW_MS = 30 * DAY_MS; // MEXC limit per myTrades / allOrders request
+const TRADE_WINDOW_MS = 30 * DAY_MS; // /myTrades accepts up to 30 days per call
+// /allOrders and the deposit/withdraw history endpoints both enforce a 7-day
+// cap. The API rejects windows of exactly 7 days (deposits → code:33333,
+// orders → code:700004 "Only 7 day's data can be queried"), so stay a clear
+// day under the boundary.
+const ORDER_WINDOW_MS = 6 * DAY_MS;
+const TRANSFER_WINDOW_MS = 6 * DAY_MS;
 
 function chunkTimeWindows(
   startMs: number,
@@ -384,7 +390,7 @@ export const mexcAdapter: ExchangeAdapter = {
 
     const endMs = query.endTimeMs ?? Date.now();
     const startMs = query.startTimeMs ?? endMs - 90 * DAY_MS;
-    const windows = chunkTimeWindows(startMs, endMs, TRADE_WINDOW_MS);
+    const windows = chunkTimeWindows(startMs, endMs, ORDER_WINDOW_MS);
 
     const all: OrderRow[] = [];
     const seen = new Set<string>();
@@ -456,7 +462,7 @@ export const mexcAdapter: ExchangeAdapter = {
       stats.lastMsg
     ) {
       throw new Error(
-        `MEXC /allOrders failed for every symbol — likely API key permission issue. Last error: ${stats.lastMsg.slice(0, 200)}`,
+        `MEXC /allOrders failed for every symbol. Last error: ${stats.lastMsg.slice(0, 200)}`,
       );
     }
     return all;
@@ -464,27 +470,42 @@ export const mexcAdapter: ExchangeAdapter = {
 
   async fetchDeposits(creds, query?: TransfersQuery): Promise<DepositRow[]> {
     const endMs = query?.endTimeMs ?? Date.now();
-    // MEXC enforces a STRICTLY-less-than-90-days window. Clamp the start
-    // up to ≥ endMs-89d (and never below the user-passed value) to dodge
-    // the {"code":33333,"msg":"query time cannot exceed 90 days"} error.
+    // MEXC accepts a lookback of up to 90 days, but each request's
+    // (endTime - startTime) must be ≤ 7 days, otherwise the API returns
+    // {"code":33333,"msg":"start time and end time diff cannot exceed 7 days"}.
     const minStart = endMs - 89 * DAY_MS;
     const startMs = Math.max(query?.startTimeMs ?? minStart, minStart);
-    const raw = await signedGet<MexcDeposit[]>(
-      "/api/v3/capital/deposit/hisrec",
-      { startTime: startMs, endTime: endMs },
-      creds,
-    );
-    if (!Array.isArray(raw)) return [];
-    return raw.map((d, idx) => ({
-      depositId: d.id ?? d.txId ?? `${d.coin}:${d.insertTime}:${idx}`,
-      coin: normalizeAsset(d.coin),
-      network: d.network ?? null,
-      amount: parseFloat(d.amount),
-      address: d.address ?? null,
-      txId: d.txId ?? null,
-      status: depositStatus(d.status),
-      occurredAt: new Date(d.insertTime).toISOString(),
-    }));
+    const windows = chunkTimeWindows(startMs, endMs, TRANSFER_WINDOW_MS);
+
+    const seen = new Set<string>();
+    const all: DepositRow[] = [];
+    // Sequential to stay polite on the signed endpoint — 13 windows max
+    // covers the full 90-day lookback and finishes well under 5 s.
+    for (const w of windows) {
+      const raw = await signedGet<MexcDeposit[]>(
+        "/api/v3/capital/deposit/hisrec",
+        { startTime: w.startMs, endTime: w.endMs },
+        creds,
+      );
+      if (!Array.isArray(raw)) continue;
+      for (let idx = 0; idx < raw.length; idx++) {
+        const d = raw[idx];
+        const id = d.id ?? d.txId ?? `${d.coin}:${d.insertTime}:${idx}`;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        all.push({
+          depositId: id,
+          coin: normalizeAsset(d.coin),
+          network: d.network ?? null,
+          amount: parseFloat(d.amount),
+          address: d.address ?? null,
+          txId: d.txId ?? null,
+          status: depositStatus(d.status),
+          occurredAt: new Date(d.insertTime).toISOString(),
+        });
+      }
+    }
+    return all;
   },
 
   async fetchAssetPricesUsd(
@@ -532,30 +553,41 @@ export const mexcAdapter: ExchangeAdapter = {
 
   async fetchWithdrawals(creds, query?: TransfersQuery): Promise<WithdrawalRow[]> {
     const endMs = query?.endTimeMs ?? Date.now();
-    // Same 89-day cap as deposits — see fetchDeposits for the reason.
+    // Same 7-day per-call / 90-day lookback caps as deposits — see fetchDeposits.
     const minStart = endMs - 89 * DAY_MS;
     const startMs = Math.max(query?.startTimeMs ?? minStart, minStart);
-    const raw = await signedGet<MexcWithdrawal[]>(
-      "/api/v3/capital/withdraw/history",
-      { startTime: startMs, endTime: endMs },
-      creds,
-    );
-    if (!Array.isArray(raw)) return [];
-    return raw.map((w, idx) => {
-      const ts = w.applyTime ?? w.createTime ?? Date.now();
-      const tsMs = typeof ts === "number" ? ts : Date.parse(String(ts));
-      return {
-        withdrawalId: w.id ?? w.txId ?? `${w.coin}:${ts}:${idx}`,
-        coin: normalizeAsset(w.coin),
-        network: w.network ?? null,
-        amount: parseFloat(w.amount),
-        fee: w.transactionFee != null ? parseFloat(w.transactionFee) : null,
-        address: w.address ?? null,
-        txId: w.txId ?? null,
-        status: withdrawalStatus(w.status),
-        occurredAt: new Date(tsMs).toISOString(),
-      };
-    });
+    const windows = chunkTimeWindows(startMs, endMs, TRANSFER_WINDOW_MS);
+
+    const seen = new Set<string>();
+    const all: WithdrawalRow[] = [];
+    for (const w of windows) {
+      const raw = await signedGet<MexcWithdrawal[]>(
+        "/api/v3/capital/withdraw/history",
+        { startTime: w.startMs, endTime: w.endMs },
+        creds,
+      );
+      if (!Array.isArray(raw)) continue;
+      for (let idx = 0; idx < raw.length; idx++) {
+        const wd = raw[idx];
+        const ts = wd.applyTime ?? wd.createTime ?? Date.now();
+        const tsMs = typeof ts === "number" ? ts : Date.parse(String(ts));
+        const id = wd.id ?? wd.txId ?? `${wd.coin}:${ts}:${idx}`;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        all.push({
+          withdrawalId: id,
+          coin: normalizeAsset(wd.coin),
+          network: wd.network ?? null,
+          amount: parseFloat(wd.amount),
+          fee: wd.transactionFee != null ? parseFloat(wd.transactionFee) : null,
+          address: wd.address ?? null,
+          txId: wd.txId ?? null,
+          status: withdrawalStatus(wd.status),
+          occurredAt: new Date(tsMs).toISOString(),
+        });
+      }
+    }
+    return all;
   },
 };
 

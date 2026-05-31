@@ -6,6 +6,7 @@ import { AlchemyKeyMissingError, fetchEvmHoldings } from "@/lib/chains/evm";
 import { fetchSolanaHoldings } from "@/lib/chains/solana";
 import { getNativePrices } from "@/lib/chains/prices";
 import { getAlchemyPricesBySymbol } from "@/lib/chains/alchemy_prices";
+import { getPublicSpotUsdPrice } from "@/lib/chains/public_ticker";
 import type { ChainType, Holding, WalletHoldings } from "@/lib/chains/types";
 
 export const dynamic = "force-dynamic";
@@ -154,15 +155,16 @@ export async function POST(request: Request) {
     captured_at: insertedAt,
   });
 
-  // Top-of-page BTC price tile: try Alchemy first (auth'd, reliable from
-  // Vercel) and fall back to CoinGecko free tier. Same reason as in
-  // bitcoin.ts — CoinGecko frequently rate-limits the shared serverless
-  // IPs and was leaving btcPriceUsd null in the response.
-  const [btcAlchemy, btcCg] = await Promise.all([
+  // Top-of-page BTC price tile: three-tier fallback (Alchemy → CoinGecko
+  // → public exchange ticker). Same reasoning as in bitcoin.ts — Alchemy's
+  // by-symbol endpoint sometimes skips BTC, CoinGecko rate-limits shared
+  // Vercel IPs, so we also race a public ticker as a last resort.
+  const [btcAlchemy, btcCg, btcPublic] = await Promise.all([
     getAlchemyPricesBySymbol(["BTC"]),
     getNativePrices(["bitcoin"]),
+    getPublicSpotUsdPrice("BTC"),
   ]);
-  const btcPriceUsd = btcAlchemy.BTC ?? btcCg.bitcoin ?? null;
+  const btcPriceUsd = btcAlchemy.BTC ?? btcCg.bitcoin ?? btcPublic ?? null;
 
   // Top-level signal: if *every* EVM wallet in this chunk failed with the
   // Alchemy-key marker, tell the UI explicitly so it can render one
