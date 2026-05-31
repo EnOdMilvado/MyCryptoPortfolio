@@ -73,6 +73,8 @@ const TAB_TO_KIND: Record<TabKey, TabKey> = {
   withdrawals: "withdrawals",
 };
 
+const ALL_TABS: TabKey[] = ["spot", "trades", "orders", "deposits", "withdrawals"];
+
 export function ExchangeDetailView({
   exchangeId,
   provider,
@@ -106,8 +108,8 @@ export function ExchangeDetailView({
 }) {
   const router = useRouter();
   const [active, setActive] = useState<TabKey>("spot");
-  const [refreshing, setRefreshing] = useState<TabKey | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [errors, setErrors] = useState<{ kind: string; error: string }[]>([]);
 
   const spot = useExcludedIds(`excluded-exchange-assets:${exchangeId}`);
   const trades = useExcludedIds(`excluded-exchange-trades:${exchangeId}`);
@@ -134,20 +136,19 @@ export function ExchangeDetailView({
     withdrawals: lastSyncedWithdrawals,
   };
 
-  async function refresh(tab: TabKey) {
-    setRefreshing(tab);
-    setError(null);
+  async function refresh(tabs: TabKey[]) {
+    setRefreshing(true);
+    setErrors([]);
     try {
       const res = await fetch("/api/exchanges/refresh", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ exchangeId, kinds: [TAB_TO_KIND[tab]] }),
+        body: JSON.stringify({ exchangeId, kinds: tabs.map((t) => TAB_TO_KIND[t]) }),
       });
       // Defensive parsing: when the server function times out or 5xx's,
-      // Vercel returns an HTML/plain-text error page, not JSON. We used
-      // to call res.json() unconditionally and the user saw the cryptic
-      // `Unexpected token 'A', "An error o"... is not valid JSON`
-      // instead of the actual problem. Read text first, then parse.
+      // Vercel returns an HTML/plain-text error page, not JSON. Read text
+      // first, then parse — otherwise res.json() throws "Unexpected token
+      // 'A', \"An error o\"..." and hides the real problem.
       const raw = await res.text();
       let json: {
         error?: string;
@@ -164,13 +165,13 @@ export function ExchangeDetailView({
         );
       }
       if (!res.ok) throw new Error(json.error ?? `Refresh failed (${res.status})`);
-      const apiError = json.exchanges?.[0]?.errors?.find((e) => e.kind === TAB_TO_KIND[tab]);
-      if (apiError) throw new Error(apiError.error);
+      const apiErrors = json.exchanges?.[0]?.errors ?? [];
+      if (apiErrors.length > 0) setErrors(apiErrors);
       router.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Refresh failed");
+      setErrors([{ kind: "all", error: e instanceof Error ? e.message : "Refresh failed" }]);
     } finally {
-      setRefreshing(null);
+      setRefreshing(false);
     }
   }
 
@@ -222,20 +223,34 @@ export function ExchangeDetailView({
             : "Never synced"}
           {active !== "spot" && " · last 90 days"}
         </span>
-        <button
-          type="button"
-          onClick={() => refresh(active)}
-          disabled={refreshing !== null}
-          className="btn-ghost text-xs"
-        >
-          {refreshing === active ? "Refreshing…" : `Refresh ${active}`}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => refresh([active])}
+            disabled={refreshing}
+            className="btn-ghost text-xs"
+          >
+            {`Refresh ${active}`}
+          </button>
+          <button
+            type="button"
+            onClick={() => refresh(ALL_TABS)}
+            disabled={refreshing}
+            className="btn-primary text-xs"
+          >
+            {refreshing ? "Refreshing…" : "Refresh all"}
+          </button>
+        </div>
       </div>
 
-      {error && (
-        <div className="text-sm text-danger bg-danger/10 rounded-xl px-3 py-2">
-          {error}
-        </div>
+      {errors.length > 0 && (
+        <ul className="text-sm text-danger bg-danger/10 rounded-xl px-3 py-2 space-y-1">
+          {errors.map((e, i) => (
+            <li key={`${e.kind}:${i}`}>
+              <span className="font-semibold capitalize">{e.kind}:</span> {e.error}
+            </li>
+          ))}
+        </ul>
       )}
 
       {active === "spot" && (
