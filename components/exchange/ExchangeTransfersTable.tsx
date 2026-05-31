@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { formatAmount, shortenAddress } from "@/lib/format";
 import type { TransferRowView } from "../ExchangeDetailView";
 
-const VISIBLE_DEFAULT = 50;
+const VISIBLE_DEFAULT = 20;
 const SCROLL_MAX_HEIGHT = "36rem";
 
 function ninetyDaysAgoIso(): string {

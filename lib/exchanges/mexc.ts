@@ -321,8 +321,16 @@ export const mexcAdapter: ExchangeAdapter = {
 
     const all: OrderRow[] = [];
     const seen = new Set<string>();
+    // Track if every call failed identically — surfaces the very common
+    // "API key lacks permission for /allOrders" case (seen on real
+    // MEXC accounts where Trades worked but Orders silently returned 0
+    // because the key had read-only Spot scope but not Trade scope).
+    let totalAttempts = 0;
+    let totalErrors = 0;
+    let lastErrorMsg: string | null = null;
     for (const symbol of symbols) {
       for (const w of windows) {
+        totalAttempts++;
         let orders: MexcOrder[];
         try {
           orders = await signedGet<MexcOrder[]>(
@@ -332,7 +340,12 @@ export const mexcAdapter: ExchangeAdapter = {
           );
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
+          totalErrors++;
+          lastErrorMsg = msg;
           if (msg.includes("-1121") || msg.includes("Invalid symbol")) break;
+          // Log once per kind of error so Vercel logs surface "403" /
+          // "-2015" (insufficient permission) instead of swallowing it.
+          console.warn(`[mexc] /allOrders ${symbol} failed: ${msg.slice(0, 200)}`);
           continue;
         }
         if (!Array.isArray(orders)) continue;
@@ -358,6 +371,21 @@ export const mexcAdapter: ExchangeAdapter = {
           });
         }
       }
+    }
+    // If we returned zero orders AND every call failed identically (and
+    // we tried more than a couple symbols), the API key almost certainly
+    // doesn't have the right permission. Throw a clear message so the
+    // route's catch surfaces it as the kind="orders" error instead of
+    // silently storing 0.
+    if (
+      all.length === 0 &&
+      totalAttempts >= 3 &&
+      totalErrors === totalAttempts &&
+      lastErrorMsg
+    ) {
+      throw new Error(
+        `MEXC /allOrders failed for every symbol — likely API key permission issue. Last error: ${lastErrorMsg.slice(0, 200)}`,
+      );
     }
     return all;
   },
