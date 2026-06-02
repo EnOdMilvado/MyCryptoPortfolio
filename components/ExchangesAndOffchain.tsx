@@ -102,17 +102,49 @@ export function ExchangesAndOffchain({
   const [refreshing, setRefreshing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  async function refreshOne(exchangeId: string): Promise<string | null> {
+    const res = await fetch("/api/exchanges/refresh", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ exchangeId }),
+    });
+    // Vercel returns an HTML/plain-text error page on function timeouts
+    // and 5xx — calling res.json() blind throws the cryptic
+    // "Unexpected token 'A', \"An error o\"..." and hides the real cause.
+    const raw = await res.text();
+    let json: { error?: string; exchanges?: { errors?: { kind: string; error: string }[] }[] } = {};
+    try {
+      json = raw ? JSON.parse(raw) : {};
+    } catch {
+      const snippet = raw.replace(/<[^>]+>/g, " ").trim().slice(0, 200);
+      return res.ok
+        ? `Server returned non-JSON: ${snippet}`
+        : `Refresh failed (${res.status}) — likely a function timeout. ${snippet}`;
+    }
+    if (!res.ok) return json.error ?? `Refresh failed (${res.status})`;
+    const apiErrors = json.exchanges?.[0]?.errors ?? [];
+    if (apiErrors.length > 0) {
+      return apiErrors.map((e) => `${e.kind}: ${e.error}`).join(" · ");
+    }
+    return null;
+  }
+
   async function refresh(exId: string | null) {
     setRefreshing(exId ?? "all");
     setError(null);
     try {
-      const res = await fetch("/api/exchanges/refresh", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(exId ? { exchangeId: exId } : {}),
-      });
-      const json = (await res.json()) as { error?: string; exchanges?: unknown[] };
-      if (!res.ok) throw new Error(json.error ?? "Refresh failed");
+      // Iterate per-exchange so each request stays well under Vercel's
+      // 60s function budget — a single all-exchanges-all-kinds request
+      // with 3+ exchanges easily times out and returns an HTML error
+      // page (which used to surface as "Unexpected token 'A'").
+      const targets = exId ? [exId] : exchanges.map((e) => e.id);
+      const errors: string[] = [];
+      for (const id of targets) {
+        const label = exchanges.find((e) => e.id === id)?.label ?? id;
+        const err = await refreshOne(id);
+        if (err) errors.push(`${label}: ${err}`);
+      }
+      if (errors.length > 0) setError(errors.join("\n"));
       router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Refresh failed");
@@ -162,7 +194,7 @@ export function ExchangesAndOffchain({
       </div>
 
       {error && (
-        <div className="text-sm text-danger bg-danger/10 rounded-xl px-3 py-2">
+        <div className="text-sm text-danger bg-danger/10 rounded-xl px-3 py-2 whitespace-pre-line">
           {error}
         </div>
       )}
