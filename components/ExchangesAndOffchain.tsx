@@ -102,15 +102,23 @@ export function ExchangesAndOffchain({
   const [refreshing, setRefreshing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function refreshOne(exchangeId: string): Promise<string | null> {
+  // Per-kind so each request gets its own 60s Vercel budget. Running all
+  // five kinds in one request reliably timed out on MEXC because /allOrders
+  // alone takes ~35-40s once you chunk 90 days into 6-day windows.
+  const SYNC_KINDS = ["spot", "trades", "orders", "deposits", "withdrawals"] as const;
+
+  async function refreshKind(
+    exchangeId: string,
+    kind: (typeof SYNC_KINDS)[number],
+  ): Promise<string | null> {
     const res = await fetch("/api/exchanges/refresh", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ exchangeId }),
+      body: JSON.stringify({ exchangeId, kinds: [kind] }),
     });
     // Vercel returns an HTML/plain-text error page on function timeouts
-    // and 5xx — calling res.json() blind throws the cryptic
-    // "Unexpected token 'A', \"An error o\"..." and hides the real cause.
+    // and 5xx — calling res.json() blind throws "Unexpected token 'A',
+    // \"An error o\"..." and hides the real cause.
     const raw = await res.text();
     let json: { error?: string; exchanges?: { errors?: { kind: string; error: string }[] }[] } = {};
     try {
@@ -122,11 +130,20 @@ export function ExchangesAndOffchain({
         : `Refresh failed (${res.status}) — likely a function timeout. ${snippet}`;
     }
     if (!res.ok) return json.error ?? `Refresh failed (${res.status})`;
-    const apiErrors = json.exchanges?.[0]?.errors ?? [];
-    if (apiErrors.length > 0) {
-      return apiErrors.map((e) => `${e.kind}: ${e.error}`).join(" · ");
-    }
-    return null;
+    const apiError = json.exchanges?.[0]?.errors?.find((e) => e.kind === kind);
+    return apiError ? apiError.error : null;
+  }
+
+  async function refreshOne(exchangeId: string): Promise<string | null> {
+    // Fire all five kinds in parallel — each runs in its own Vercel
+    // function instance so the slow ones (orders, trades) no longer
+    // starve the fast ones (spot, deposits).
+    const results = await Promise.all(
+      SYNC_KINDS.map(async (kind) => ({ kind, err: await refreshKind(exchangeId, kind) })),
+    );
+    const failed = results.filter((r) => r.err);
+    if (failed.length === 0) return null;
+    return failed.map((r) => `${r.kind}: ${r.err}`).join(" · ");
   }
 
   async function refresh(exId: string | null) {

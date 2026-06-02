@@ -136,37 +136,48 @@ export function ExchangeDetailView({
     withdrawals: lastSyncedWithdrawals,
   };
 
+  async function refreshKind(kind: TabKey): Promise<string | null> {
+    const res = await fetch("/api/exchanges/refresh", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ exchangeId, kinds: [TAB_TO_KIND[kind]] }),
+    });
+    // Vercel returns an HTML/plain-text error page on function timeouts
+    // and 5xx — calling res.json() blind throws "Unexpected token 'A',
+    // \"An error o\"..." and hides the real cause.
+    const raw = await res.text();
+    let json: {
+      error?: string;
+      exchanges?: { errors?: { kind: string; error: string }[] }[];
+    } = {};
+    try {
+      json = raw ? JSON.parse(raw) : {};
+    } catch {
+      const snippet = raw.replace(/<[^>]+>/g, " ").trim().slice(0, 200);
+      return res.ok
+        ? `Server returned non-JSON: ${snippet}`
+        : `Refresh failed (${res.status}) — likely a function timeout. ${snippet}`;
+    }
+    if (!res.ok) return json.error ?? `Refresh failed (${res.status})`;
+    const apiError = json.exchanges?.[0]?.errors?.find((e) => e.kind === TAB_TO_KIND[kind]);
+    return apiError ? apiError.error : null;
+  }
+
   async function refresh(tabs: TabKey[]) {
     setRefreshing(true);
     setErrors([]);
     try {
-      const res = await fetch("/api/exchanges/refresh", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ exchangeId, kinds: tabs.map((t) => TAB_TO_KIND[t]) }),
-      });
-      // Defensive parsing: when the server function times out or 5xx's,
-      // Vercel returns an HTML/plain-text error page, not JSON. Read text
-      // first, then parse — otherwise res.json() throws "Unexpected token
-      // 'A', \"An error o\"..." and hides the real problem.
-      const raw = await res.text();
-      let json: {
-        error?: string;
-        exchanges?: { errors?: { kind: string; error: string }[] }[];
-      } = {};
-      try {
-        json = raw ? JSON.parse(raw) : {};
-      } catch {
-        const snippet = raw.replace(/<[^>]+>/g, " ").trim().slice(0, 200);
-        throw new Error(
-          res.ok
-            ? `Server returned non-JSON: ${snippet}`
-            : `Refresh failed (${res.status}) — likely a function timeout. ${snippet}`,
-        );
+      // Fire each kind in its own request, in parallel. One bundled
+      // request for all five kinds reliably timed out on MEXC because
+      // /allOrders alone takes ~35-40s once you chunk 90 days into
+      // 6-day windows — splitting per-kind gives each its own 60s budget.
+      const results = await Promise.all(
+        tabs.map(async (tab) => ({ kind: TAB_TO_KIND[tab], err: await refreshKind(tab) })),
+      );
+      const failed = results.filter((r) => r.err);
+      if (failed.length > 0) {
+        setErrors(failed.map((r) => ({ kind: r.kind, error: r.err! })));
       }
-      if (!res.ok) throw new Error(json.error ?? `Refresh failed (${res.status})`);
-      const apiErrors = json.exchanges?.[0]?.errors ?? [];
-      if (apiErrors.length > 0) setErrors(apiErrors);
       router.refresh();
     } catch (e) {
       setErrors([{ kind: "all", error: e instanceof Error ? e.message : "Refresh failed" }]);
