@@ -12,7 +12,7 @@ const PROVIDERS = [
   { id: "kucoin", label: "KuCoin", working: false },
   { id: "bybit", label: "Bybit", working: false },
   { id: "okx", label: "OKX", working: false },
-  { id: "gate", label: "Gate.io", working: false },
+  { id: "gate", label: "Gate.io", working: true },
   { id: "mexc", label: "MEXC", working: true },
   { id: "htx", label: "HTX (Huobi)", working: true },
   { id: "other", label: "Other", working: false },

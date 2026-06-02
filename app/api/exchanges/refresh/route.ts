@@ -90,10 +90,17 @@ export async function POST(request: Request) {
     };
 
     if (!adapter) {
-      result.errors.push({
-        kind: "spot",
-        error: `Provider "${ex.provider}" not yet implemented`,
-      });
+      // "other" is the manual-only placeholder — the user added it on
+      // purpose to track an exchange we don't have an API integration for.
+      // Treat refresh as a successful no-op so it doesn't surface as an
+      // error every time. For other unknown providers, keep the error so
+      // typos / new providers without an adapter are visible.
+      if (ex.provider !== "other") {
+        result.errors.push({
+          kind: "spot",
+          error: `Provider "${ex.provider}" not yet implemented`,
+        });
+      }
       results.push(result);
       continue;
     }
