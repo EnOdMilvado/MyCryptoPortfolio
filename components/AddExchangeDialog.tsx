@@ -15,6 +15,7 @@ const PROVIDERS = [
   { id: "gate", label: "Gate.io", working: true },
   { id: "mexc", label: "MEXC", working: true },
   { id: "htx", label: "HTX (Huobi)", working: true },
+  { id: "gems", label: "GEMS.trade", working: true },
   { id: "other", label: "Other", working: false },
 ] as const;
 
