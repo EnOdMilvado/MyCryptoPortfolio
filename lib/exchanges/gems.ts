@@ -38,6 +38,19 @@ function buildQuery(params: Record<string, string | number | undefined>): string
   return entries.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&");
 }
 
+// CloudFront in front of gems.trade routes /api/* to the Peatio backend
+// only when the request looks like a browser request — without these,
+// requests originating from Vercel's serverless region landed on the SPA
+// behavior and came back as index.html, breaking the JSON parser. Local
+// curl/Node fetches happened to work without them, masking the issue
+// during development.
+const BROWSER_HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+  Origin: BASE,
+  Referer: `${BASE}/`,
+} as const;
+
 function authHeaders({ apiKey, apiSecret }: ExchangeCredentials): Record<string, string> {
   if (!apiKey || !apiSecret) throw new Error("Missing GEMS credentials");
   const nonce = Date.now().toString();
@@ -47,6 +60,7 @@ function authHeaders({ apiKey, apiSecret }: ExchangeCredentials): Record<string,
     "X-Auth-Nonce": nonce,
     "X-Auth-Signature": sig,
     Accept: "application/json",
+    ...BROWSER_HEADERS,
   };
 }
 
@@ -187,8 +201,12 @@ async function fetchMarkets(): Promise<GemsMarket[]> {
   if (cachedMarkets && Date.now() - cachedMarkets.fetched < MARKETS_TTL_MS) {
     return cachedMarkets.markets;
   }
+  // No Next data-cache here — a first response that came back as the SPA
+  // HTML (before we added browser headers below) would otherwise have
+  // poisoned the cache for 5 minutes and made the bug feel sticky.
   const res = await fetch(`${BASE}${PEATIO}/public/markets?limit=1000`, {
-    next: { revalidate: 300 },
+    headers: BROWSER_HEADERS,
+    cache: "no-store",
   });
   if (!res.ok) return cachedMarkets?.markets ?? [];
   const arr = (await res.json()) as GemsMarket[];
