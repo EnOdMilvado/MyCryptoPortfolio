@@ -74,9 +74,15 @@ async function signedGet<T>(
   params: Record<string, string | number | undefined>,
   creds: ExchangeCredentials,
 ): Promise<T> {
-  const qs = buildQuery(params);
-  const url = `${BASE}${path}${qs ? `?${qs}` : ""}`;
-  const res = await fetch(url, { headers: authHeaders(creds) });
+  // Cache-bust: from the IAD12 PoP CloudFront was serving a cached SPA
+  // shell for every /api/v2/peatio/* URL. A unique query param forces a
+  // fresh origin lookup. Use a name unlikely to clash with real params.
+  const qs = buildQuery({ ...params, _cb: Date.now() });
+  const url = `${BASE}${path}?${qs}`;
+  const res = await fetch(url, {
+    headers: { ...authHeaders(creds), "Cache-Control": "no-cache" },
+    cache: "no-store",
+  });
   const text = await res.text();
   if (!res.ok) {
     throw new Error(`GEMS ${path} ${res.status}: ${text.slice(0, 200)}`);
