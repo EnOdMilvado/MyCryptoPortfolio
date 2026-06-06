@@ -84,7 +84,15 @@ async function signedGet<T>(
   try {
     return JSON.parse(text) as T;
   } catch {
-    throw new Error(`GEMS ${path} returned non-JSON: ${text.slice(0, 200)}`);
+    // When CloudFront mis-routes us to the SPA shell the body is HTML.
+    // Surface the PoP + cache-status response headers so we can tell
+    // which edge Vercel is hitting and why it picked the SPA behavior.
+    const pop = res.headers.get("x-amz-cf-pop") ?? "?";
+    const cache = res.headers.get("x-cache") ?? "?";
+    const via = res.headers.get("via") ?? "?";
+    throw new Error(
+      `GEMS ${path} returned non-JSON [pop=${pop} cache=${cache} via=${via}]: ${text.slice(0, 160)}`,
+    );
   }
 }
 
