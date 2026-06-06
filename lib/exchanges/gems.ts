@@ -49,6 +49,11 @@ const BROWSER_HEADERS = {
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
   Origin: BASE,
   Referer: `${BASE}/`,
+  "Accept-Language": "en-US,en;q=0.9",
+  "X-Requested-With": "XMLHttpRequest",
+  "Sec-Fetch-Mode": "cors",
+  "Sec-Fetch-Site": "same-origin",
+  "Sec-Fetch-Dest": "empty",
 } as const;
 
 function authHeaders({ apiKey, apiSecret }: ExchangeCredentials): Record<string, string> {
