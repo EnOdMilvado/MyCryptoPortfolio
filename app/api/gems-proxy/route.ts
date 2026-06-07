@@ -37,13 +37,18 @@ export async function POST(req: Request): Promise<Response> {
   if (!body.headers || typeof body.headers !== "object") {
     return new Response("missing headers", { status: 400 });
   }
-  const upstream = await fetch(`https://www.gems.trade${body.path}`, {
+  const upstreamUrl = `https://www.gems.trade${body.path}`;
+  const sentHeaderKeys = Object.keys(body.headers).join(",");
+  const upstream = await fetch(upstreamUrl, {
     headers: body.headers,
     cache: "no-store",
   });
   const text = await upstream.text();
-  // Pass the diagnostic CloudFront headers back to the caller so the
-  // Node-side adapter can still attribute non-JSON responses to a PoP.
+  // Pass diagnostic CloudFront headers back. Also tag the request with
+  // what the proxy actually saw so when the Node-side adapter surfaces a
+  // non-JSON response we can tell which header set the proxy forwarded
+  // and what status the upstream returned (the response body is the SPA
+  // shell so it carries no upstream-status information by itself).
   return new Response(text, {
     status: upstream.status,
     headers: {
@@ -51,6 +56,10 @@ export async function POST(req: Request): Promise<Response> {
       "x-amz-cf-pop": upstream.headers.get("x-amz-cf-pop") ?? "",
       "x-cache": upstream.headers.get("x-cache") ?? "",
       via: upstream.headers.get("via") ?? "",
+      "x-debug-upstream-status": String(upstream.status),
+      "x-debug-upstream-content-type": upstream.headers.get("content-type") ?? "",
+      "x-debug-sent-headers": sentHeaderKeys,
+      "x-debug-body-len": String(text.length),
     },
   });
 }

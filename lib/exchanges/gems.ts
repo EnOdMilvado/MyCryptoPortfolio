@@ -156,8 +156,12 @@ async function signedGet<T>(
     const pop = res.headers.get("x-amz-cf-pop") ?? "?";
     const cache = res.headers.get("x-cache") ?? "?";
     const via = res.headers.get("via") ?? "?";
+    const upStatus = res.headers.get("x-debug-upstream-status") ?? "?";
+    const upCt = res.headers.get("x-debug-upstream-content-type") ?? "?";
+    const sentHdrs = res.headers.get("x-debug-sent-headers") ?? "?";
+    const bodyLen = res.headers.get("x-debug-body-len") ?? "?";
     throw new Error(
-      `GEMS ${path} returned non-JSON [pop=${pop} cache=${cache} via=${via}]: ${text.slice(0, 160)}`,
+      `GEMS ${path} non-JSON [pop=${pop} cache=${cache} via=${via} upstream=${upStatus} ct=${upCt} sent=${sentHdrs} bodyLen=${bodyLen}]: ${text.slice(0, 100)}`,
     );
   }
 }
