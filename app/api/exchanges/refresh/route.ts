@@ -119,31 +119,44 @@ export async function POST(request: Request) {
         const symbols = balances.map((b) => b.asset);
         spotAssets = symbols;
 
-        // Authoritative first: ask the exchange itself for prices on its
-        // listed tokens. Fill the long-tail with our generic resolver.
+        // Resolver first: CMC → Alchemy → CoinGecko → DexScreener (same
+        // pipeline the wallet path uses). These sources are continuously
+        // updated and beat exchange-internal "last balance valuation"
+        // fields that can be hours stale (saw this on GEMS, whose
+        // /account/balances ships a `currency_usdt` that lags the live
+        // ticker by an hour or more).
         const prices: Record<string, number> = {};
         const change24h: Record<string, number | null> = {};
-        if (adapter.fetchAssetPricesUsd) {
-          try {
-            const exchangePrices = await adapter.fetchAssetPricesUsd(symbols, creds);
-            for (const k of Object.keys(exchangePrices)) {
-              prices[k.toUpperCase()] = exchangePrices[k];
-            }
-          } catch {
-            // Non-fatal — fall back to generic resolver below.
-          }
-        }
-        // CMC quotes give us 24h % change for ALL symbols, even ones where
-        // exchange ticker already supplied a price — overwrite the price
-        // when CMC has it (CMC tends to be more consistent for cross-token
-        // valuation than per-exchange last-trade prices).
         const quotes = await resolvePriceQuotesForSymbols(symbols);
         for (const k of Object.keys(quotes)) {
           const q = quotes[k];
-          if (prices[k] == null) prices[k] = q.priceUsd;
+          prices[k] = q.priceUsd;
           change24h[k] = q.change24h;
         }
-        // Final pass: anything still missing → price-only resolver.
+        // Exchange ticker as the long-tail fallback. For exchange-specific
+        // altcoins that CMC / Alchemy / CoinGecko / DexScreener all miss,
+        // the exchange itself is usually the only price source — its
+        // public ticker (MEXC) or per-balance valuation (GEMS) covers
+        // those tokens at the cost of some freshness.
+        const stillMissingAfterGlobal = symbols.filter(
+          (s) => prices[s.toUpperCase()] == null,
+        );
+        if (stillMissingAfterGlobal.length > 0 && adapter.fetchAssetPricesUsd) {
+          try {
+            const exchangePrices = await adapter.fetchAssetPricesUsd(
+              stillMissingAfterGlobal,
+              creds,
+            );
+            for (const k of Object.keys(exchangePrices)) {
+              const upper = k.toUpperCase();
+              if (prices[upper] == null) prices[upper] = exchangePrices[k];
+            }
+          } catch {
+            // Non-fatal — keep whatever the global resolver gave us.
+          }
+        }
+        // Final long-tail price-only resolver — picks up anything the
+        // first quote pass missed but a fresh pass might catch.
         const stillMissing = symbols.filter((s) => prices[s.toUpperCase()] == null);
         if (stillMissing.length > 0) {
           const fallback = await resolvePricesForSymbols(stillMissing);
