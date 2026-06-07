@@ -69,20 +69,43 @@ function authHeaders({ apiKey, apiSecret }: ExchangeCredentials): Record<string,
   };
 }
 
+/**
+ * Compute the absolute origin to call our own Edge proxy at. On Vercel
+ * VERCEL_URL is the bare hostname of the current deployment. In `next
+ * dev` neither var is set — fall back to localhost.
+ */
+function ownOrigin(): string | null {
+  const u = process.env.VERCEL_URL;
+  if (u) return `https://${u}`;
+  if (process.env.NEXT_PUBLIC_VERCEL_URL) return `https://${process.env.NEXT_PUBLIC_VERCEL_URL}`;
+  return null;
+}
+
 async function signedGet<T>(
   path: string,
   params: Record<string, string | number | undefined>,
   creds: ExchangeCredentials,
 ): Promise<T> {
-  // Cache-bust: from the IAD12 PoP CloudFront was serving a cached SPA
-  // shell for every /api/v2/peatio/* URL. A unique query param forces a
-  // fresh origin lookup. Use a name unlikely to clash with real params.
+  // Cache-bust query param. From the IAD12 PoP CloudFront was caching
+  // SPA-shell responses for unauthed paths; a unique key forces a fresh
+  // origin lookup even when we end up on the direct path.
   const qs = buildQuery({ ...params, _cb: Date.now() });
-  const url = `${BASE}${path}?${qs}`;
-  const res = await fetch(url, {
-    headers: { ...authHeaders(creds), "Cache-Control": "no-cache" },
-    cache: "no-store",
-  });
+  const fullPath = `${path}?${qs}`;
+  const headers = { ...authHeaders(creds), "Cache-Control": "no-cache" };
+
+  // On Vercel we route via the Edge proxy in hnd1 (Tokyo) so the
+  // outbound lands on a CloudFront PoP that can reach the GEMS origin.
+  // Locally `next dev` calls gems.trade directly.
+  const origin = ownOrigin();
+  const res = origin
+    ? await fetch(`${origin}/api/gems-proxy`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: fullPath, headers }),
+        cache: "no-store",
+      })
+    : await fetch(`${BASE}${fullPath}`, { headers, cache: "no-store" });
+
   const text = await res.text();
   if (!res.ok) {
     throw new Error(`GEMS ${path} ${res.status}: ${text.slice(0, 200)}`);
@@ -90,9 +113,9 @@ async function signedGet<T>(
   try {
     return JSON.parse(text) as T;
   } catch {
-    // When CloudFront mis-routes us to the SPA shell the body is HTML.
-    // Surface the PoP + cache-status response headers so we can tell
-    // which edge Vercel is hitting and why it picked the SPA behavior.
+    // Surface upstream CloudFront diagnostics. The Edge proxy forwards
+    // x-amz-cf-pop / x-cache / via verbatim, so this attribution still
+    // works through the proxy path.
     const pop = res.headers.get("x-amz-cf-pop") ?? "?";
     const cache = res.headers.get("x-cache") ?? "?";
     const via = res.headers.get("via") ?? "?";
@@ -220,13 +243,19 @@ async function fetchMarkets(): Promise<GemsMarket[]> {
   if (cachedMarkets && Date.now() - cachedMarkets.fetched < MARKETS_TTL_MS) {
     return cachedMarkets.markets;
   }
-  // No Next data-cache here — a first response that came back as the SPA
-  // HTML (before we added browser headers below) would otherwise have
-  // poisoned the cache for 5 minutes and made the bug feel sticky.
-  const res = await fetch(`${BASE}${PEATIO}/public/markets?limit=1000`, {
-    headers: BROWSER_HEADERS,
-    cache: "no-store",
-  });
+  // Route via the same Edge proxy so the public markets call lands on a
+  // CloudFront PoP that can reach the origin. (The Node serverless region
+  // ends up on IAD12 which couldn't.)
+  const path = `${PEATIO}/public/markets?limit=1000`;
+  const origin = ownOrigin();
+  const res = origin
+    ? await fetch(`${origin}/api/gems-proxy`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path, headers: BROWSER_HEADERS }),
+        cache: "no-store",
+      })
+    : await fetch(`${BASE}${path}`, { headers: BROWSER_HEADERS, cache: "no-store" });
   if (!res.ok) return cachedMarkets?.markets ?? [];
   const arr = (await res.json()) as GemsMarket[];
   if (!Array.isArray(arr)) return cachedMarkets?.markets ?? [];
