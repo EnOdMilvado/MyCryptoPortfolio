@@ -75,10 +75,16 @@ function authHeaders({ apiKey, apiSecret }: ExchangeCredentials): Record<string,
  * dev` neither var is set — fall back to localhost.
  */
 function ownOrigin(): string | null {
-  const u = process.env.VERCEL_URL;
-  if (u) return `https://${u}`;
-  if (process.env.NEXT_PUBLIC_VERCEL_URL) return `https://${process.env.NEXT_PUBLIC_VERCEL_URL}`;
-  return null;
+  // Prefer the canonical production URL (mycryptoportfolio-lac.vercel.app)
+  // over VERCEL_URL (mycryptoportfolio-<hash>-or10mati-...-projects.vercel.app).
+  // The per-deployment URL is on a subdomain that the SSO/edge router does
+  // not always accept for in-deployment self-fetches — Node's fetch throws
+  // a low-level "fetch failed" before any HTTP exchange takes place.
+  const u =
+    process.env.VERCEL_PROJECT_PRODUCTION_URL ||
+    process.env.VERCEL_URL ||
+    process.env.NEXT_PUBLIC_VERCEL_URL;
+  return u ? `https://${u}` : null;
 }
 
 /**
@@ -115,14 +121,27 @@ async function signedGet<T>(
   // outbound lands on a CloudFront PoP that can reach the GEMS origin.
   // Locally `next dev` calls gems.trade directly.
   const origin = ownOrigin();
-  const res = origin
-    ? await fetch(`${origin}/api/gems-proxy`, {
-        method: "POST",
-        headers: proxyHeaders(),
-        body: JSON.stringify({ path: fullPath, headers }),
-        cache: "no-store",
-      })
-    : await fetch(`${BASE}${fullPath}`, { headers, cache: "no-store" });
+  let res: Response;
+  try {
+    res = origin
+      ? await fetch(`${origin}/api/gems-proxy`, {
+          method: "POST",
+          headers: proxyHeaders(),
+          body: JSON.stringify({ path: fullPath, headers }),
+          cache: "no-store",
+        })
+      : await fetch(`${BASE}${fullPath}`, { headers, cache: "no-store" });
+  } catch (e) {
+    // Node fetch throws bare "fetch failed" on DNS/TCP/TLS errors. Surface
+    // the underlying cause so we don't have to guess from the outer message.
+    const root = e instanceof Error && (e as { cause?: unknown }).cause;
+    const cause = root instanceof Error ? `${root.name}: ${root.message}` : String(root ?? "");
+    throw new Error(
+      `GEMS ${path} fetch failed (origin=${origin ?? "direct"}, hasBypass=${
+        process.env.VERCEL_AUTOMATION_BYPASS_SECRET ? "yes" : "no"
+      })${cause ? ` cause=${cause}` : ""}`,
+    );
+  }
 
   const text = await res.text();
   if (!res.ok) {
