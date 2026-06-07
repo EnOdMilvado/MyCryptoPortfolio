@@ -81,6 +81,24 @@ function ownOrigin(): string | null {
   return null;
 }
 
+/**
+ * Build the headers used to call the in-deployment Edge proxy. If
+ * Deployment Protection is on AND "Protection Bypass for Automation" is
+ * enabled, Vercel auto-exposes the secret as VERCEL_AUTOMATION_BYPASS_SECRET
+ * and accepts it via the x-vercel-protection-bypass header. Without the
+ * header, server-to-server fetches against a protected deployment come
+ * back as the Vercel "Authentication Required" HTML page (401).
+ */
+function proxyHeaders(): Record<string, string> {
+  const h: Record<string, string> = { "content-type": "application/json" };
+  const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+  if (bypass) {
+    h["x-vercel-protection-bypass"] = bypass;
+    h["x-vercel-set-bypass-cookie"] = "samesitenone";
+  }
+  return h;
+}
+
 async function signedGet<T>(
   path: string,
   params: Record<string, string | number | undefined>,
@@ -100,7 +118,7 @@ async function signedGet<T>(
   const res = origin
     ? await fetch(`${origin}/api/gems-proxy`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: proxyHeaders(),
         body: JSON.stringify({ path: fullPath, headers }),
         cache: "no-store",
       })
@@ -251,7 +269,7 @@ async function fetchMarkets(): Promise<GemsMarket[]> {
   const res = origin
     ? await fetch(`${origin}/api/gems-proxy`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: proxyHeaders(),
         body: JSON.stringify({ path, headers: BROWSER_HEADERS }),
         cache: "no-store",
       })
