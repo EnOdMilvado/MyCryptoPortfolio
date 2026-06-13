@@ -20,18 +20,43 @@ interface WalletRow {
   chain_type: ChainType;
 }
 
+// Wall-clock cap per wallet so one slow chain (Solana SPL price lookups
+// hammer CoinGecko on the free tier, sometimes >60s) can't take down the
+// whole /api/holdings call. The function's maxDuration is 60s — race
+// against ~50s so we still have time to return a structured error and
+// flush logs instead of getting a 504 with no body.
+const PER_WALLET_TIMEOUT_MS = 50_000;
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(
+      () => reject(new Error(`${label} exceeded ${Math.round(ms / 1000)}s`)),
+      ms,
+    );
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      },
+    );
+  });
+}
+
 async function fetchForWallet(w: WalletRow): Promise<WalletHoldings> {
   try {
     let holdings: Holding[];
     switch (w.chain_type) {
       case "btc":
-        holdings = await fetchBitcoinHoldings(w.address);
+        holdings = await withTimeout(fetchBitcoinHoldings(w.address), PER_WALLET_TIMEOUT_MS, "btc");
         break;
       case "evm":
-        holdings = await fetchEvmHoldings(w.address);
+        holdings = await withTimeout(fetchEvmHoldings(w.address), PER_WALLET_TIMEOUT_MS, "evm");
         break;
       case "sol":
-        holdings = await fetchSolanaHoldings(w.address);
+        holdings = await withTimeout(fetchSolanaHoldings(w.address), PER_WALLET_TIMEOUT_MS, "sol");
         break;
       default:
         holdings = [];
