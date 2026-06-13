@@ -120,18 +120,26 @@ async function getJupiterTokens(): Promise<Map<string, JupToken>> {
 }
 
 async function rpc<T>(method: string, params: unknown[]): Promise<T | null> {
-  try {
-    const res = await fetch(endpoint(), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ id: 1, jsonrpc: "2.0", method, params }),
-    });
-    if (!res.ok) return null;
-    const json = (await res.json()) as { result?: T; error?: unknown };
-    return (json.result as T) ?? null;
-  } catch {
-    return null;
+  // Surface failures instead of swallowing them. The Phantom wallet was
+  // silently caching zero holdings for weeks because every Alchemy call
+  // returned an error (likely "Solana not enabled on this Alchemy app")
+  // and rpc() ate it, leaving fetchSolanaHoldings to return [].
+  const res = await fetch(endpoint(), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: 1, jsonrpc: "2.0", method, params }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Solana RPC ${method} ${res.status}: ${body.slice(0, 200)}`);
   }
+  const json = (await res.json()) as { result?: T; error?: { code?: number; message?: string } };
+  if (json.error) {
+    throw new Error(
+      `Solana RPC ${method} error: ${json.error.message ?? JSON.stringify(json.error)}`,
+    );
+  }
+  return (json.result as T) ?? null;
 }
 
 const SPL_TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
