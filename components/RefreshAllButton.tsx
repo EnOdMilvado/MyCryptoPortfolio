@@ -14,9 +14,17 @@ interface Props {
   compact?: boolean;
 }
 
-// Refresh in chunks to keep each /api/holdings request under the function
-// timeout when the user has many wallets.
-const CHUNK_SIZE = 5;
+// One wallet per request — keeps every /api/holdings call well under
+// Vercel's 60s budget even when the wallet has hundreds of tokens (e.g.
+// a Phantom wallet with a long SPL list). Many small requests run in
+// parallel below, so this is faster than the old "5-per-chunk + serial"
+// shape, not slower.
+const CHUNK_SIZE = 1;
+// Cap how many wallet refreshes are in flight at once. Vercel auto-scales
+// invocations, but the per-region concurrency is bounded and bursty
+// dispatch occasionally surfaces as "Failed to fetch" — this throttles
+// the client just enough to stay below that ceiling.
+const PARALLEL_LIMIT = 8;
 
 export function RefreshAllButton({ walletIds, lastFetchedAt, compact = false }: Props) {
   const router = useRouter();
@@ -36,37 +44,67 @@ export function RefreshAllButton({ walletIds, lastFetchedAt, compact = false }: 
     let configError: string | null = null;
     const walletErrors: { id: string; chain: string; msg: string }[] = [];
     try {
+      // Build per-wallet chunks up front (CHUNK_SIZE=1) and walk them
+      // with a small parallel pool. Pull from a shared cursor so the
+      // worker count is the only bound on in-flight requests; each
+      // request only carries one wallet, so a slow one doesn't gate
+      // anything else and a failure only affects its own wallet.
+      const chunks: string[][] = [];
       for (let i = 0; i < walletIds.length; i += CHUNK_SIZE) {
-        const chunk = walletIds.slice(i, i + CHUNK_SIZE);
-        const res = await fetch("/api/holdings", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ walletIds: chunk }),
-        });
-        const json = (await res.json().catch(() => null)) as
-          | {
-              error?: string;
-              configError?: string | null;
-              wallets?: {
-                walletId: string;
-                chainType: string;
-                error?: string;
-              }[];
-            }
-          | null;
-        if (!res.ok) {
-          throw new Error(json?.error ?? `Chunk failed (${res.status})`);
-        }
-        // Hoist the first configError we see — every chunk reports it
-        // independently so any one is enough.
-        if (!configError && json?.configError) configError = json.configError;
-        for (const w of json?.wallets ?? []) {
-          if (w.error) {
-            walletErrors.push({ id: w.walletId, chain: w.chainType, msg: w.error });
-          }
-        }
-        setProgress({ done: Math.min(i + CHUNK_SIZE, walletIds.length), total: walletIds.length });
+        chunks.push(walletIds.slice(i, i + CHUNK_SIZE));
       }
+      let done = 0;
+      let cursor = 0;
+      async function processOne(chunk: string[]): Promise<void> {
+        try {
+          const res = await fetch("/api/holdings", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ walletIds: chunk }),
+          });
+          const json = (await res.json().catch(() => null)) as
+            | {
+                error?: string;
+                configError?: string | null;
+                wallets?: { walletId: string; chainType: string; error?: string }[];
+              }
+            | null;
+          if (!res.ok) {
+            for (const id of chunk) {
+              walletErrors.push({
+                id,
+                chain: "?",
+                msg: json?.error ?? `Chunk failed (${res.status})`,
+              });
+            }
+            return;
+          }
+          if (!configError && json?.configError) configError = json.configError;
+          for (const w of json?.wallets ?? []) {
+            if (w.error) {
+              walletErrors.push({ id: w.walletId, chain: w.chainType, msg: w.error });
+            }
+          }
+        } catch (e) {
+          // Network-level error (TLS, DNS, Vercel timeout returning HTML).
+          // Tag every wallet in this chunk so the user sees what failed.
+          const msg = e instanceof Error ? e.message : "Network error";
+          for (const id of chunk) walletErrors.push({ id, chain: "?", msg });
+        } finally {
+          done += chunk.length;
+          setProgress({ done, total: walletIds.length });
+        }
+      }
+      async function pump(): Promise<void> {
+        while (true) {
+          const i = cursor++;
+          if (i >= chunks.length) return;
+          await processOne(chunks[i]);
+        }
+      }
+      await Promise.all(
+        Array.from({ length: Math.min(PARALLEL_LIMIT, chunks.length) }, () => pump()),
+      );
       // After all wallets refresh, fill in any 24h % changes that weren't
       // captured during the per-chain price resolution. Best-effort —
       // failures here don't block the refresh.
