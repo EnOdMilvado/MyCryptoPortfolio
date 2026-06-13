@@ -59,11 +59,20 @@ async function resolveSolanaNativePrice(): Promise<PriceInfo | null> {
   return { usd, change24h: cgEntry?.change24h ?? null };
 }
 
-function endpoint(): string {
+function alchemyEndpoint(): string | null {
   const key = process.env.ALCHEMY_API_KEY;
-  if (!key) throw new Error("Missing ALCHEMY_API_KEY");
+  if (!key) return null;
   return `https://solana-mainnet.g.alchemy.com/v2/${key}`;
 }
+
+// Public Solana RPC endpoints. Used as fallback when Alchemy fails (e.g.
+// when the Alchemy app doesn't have Solana enabled, or it 429s under the
+// free-tier compute-unit budget). Race them so the slowest doesn't gate
+// the page.
+const PUBLIC_RPCS = [
+  "https://api.mainnet-beta.solana.com",
+  "https://solana-rpc.publicnode.com",
+] as const;
 
 interface SolBalanceResult {
   value: number;
@@ -119,27 +128,45 @@ async function getJupiterTokens(): Promise<Map<string, JupToken>> {
   }
 }
 
-async function rpc<T>(method: string, params: unknown[]): Promise<T | null> {
-  // Surface failures instead of swallowing them. The Phantom wallet was
-  // silently caching zero holdings for weeks because every Alchemy call
-  // returned an error (likely "Solana not enabled on this Alchemy app")
-  // and rpc() ate it, leaving fetchSolanaHoldings to return [].
-  const res = await fetch(endpoint(), {
+async function rpcOne<T>(url: string, method: string, params: unknown[]): Promise<T | null> {
+  const res = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ id: 1, jsonrpc: "2.0", method, params }),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`Solana RPC ${method} ${res.status}: ${body.slice(0, 200)}`);
+    throw new Error(`${res.status}: ${body.slice(0, 160)}`);
   }
   const json = (await res.json()) as { result?: T; error?: { code?: number; message?: string } };
   if (json.error) {
-    throw new Error(
-      `Solana RPC ${method} error: ${json.error.message ?? JSON.stringify(json.error)}`,
-    );
+    throw new Error(json.error.message ?? JSON.stringify(json.error));
   }
   return (json.result as T) ?? null;
+}
+
+/**
+ * Try Alchemy first (when configured); on any failure fall back through
+ * the public RPC pool. The Phantom wallet was silently caching zero
+ * holdings for weeks because the previous rpc() swallowed every error
+ * and let fetchSolanaHoldings return [] — preserve the last error and
+ * only throw it after every endpoint has been tried.
+ */
+async function rpc<T>(method: string, params: unknown[]): Promise<T | null> {
+  const endpoints: string[] = [];
+  const alch = alchemyEndpoint();
+  if (alch) endpoints.push(alch);
+  endpoints.push(...PUBLIC_RPCS);
+
+  let lastErr: string | null = null;
+  for (const url of endpoints) {
+    try {
+      return await rpcOne<T>(url, method, params);
+    } catch (e) {
+      lastErr = e instanceof Error ? e.message : String(e);
+    }
+  }
+  throw new Error(`Solana RPC ${method} failed across ${endpoints.length} endpoints: ${lastErr}`);
 }
 
 const SPL_TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
