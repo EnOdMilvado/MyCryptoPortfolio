@@ -13,7 +13,7 @@ export interface WalletDisplay {
   portfolioId: string;
   name: string;
   address: string;
-  chainType: "btc" | "evm" | "sol";
+  chainType: "btc" | "evm" | "sol" | "ton" | "dot" | "theta";
   totalUsd: number;
   totalBtc: number;
 }
@@ -22,6 +22,9 @@ const CHAIN_BADGE: Record<WalletDisplay["chainType"], string> = {
   btc: "₿ Bitcoin",
   evm: "Ξ EVM",
   sol: "◎ Solana",
+  ton: "💎 TON",
+  dot: "● Polkadot",
+  theta: "Θ Theta",
 };
 
 export function WalletCard({

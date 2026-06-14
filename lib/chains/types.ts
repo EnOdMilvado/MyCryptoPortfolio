@@ -1,4 +1,4 @@
-export type ChainType = "btc" | "evm" | "sol";
+export type ChainType = "btc" | "evm" | "sol" | "ton" | "dot" | "theta";
 
 export type EvmChain =
   | "ethereum"
@@ -29,7 +29,7 @@ export type EvmChain =
   | "polygon_zkevm"
   | "arbnova";
 
-export type ChainId = "bitcoin" | "solana" | "exchange" | EvmChain;
+export type ChainId = "bitcoin" | "solana" | "ton" | "polkadot" | "theta" | "exchange" | EvmChain;
 
 export interface RawTokenBalance {
   chain: ChainId;
@@ -134,6 +134,9 @@ export const ALCHEMY_EVM_SUBDOMAIN: Record<EvmChain, string> = {
 export const CHAIN_COLORS: Record<ChainId, string> = {
   bitcoin: "#F7931A",
   solana: "#14F195",
+  ton: "#0098EA",
+  polkadot: "#E6007A",
+  theta: "#2AB8E6",
   exchange: "#7C3AED",
   ethereum: "#627EEA",
   polygon: "#8247E5",
@@ -168,6 +171,9 @@ export const CHAIN_COLORS: Record<ChainId, string> = {
 export const CHAIN_LABEL: Record<ChainId, string> = {
   bitcoin: "Bitcoin",
   solana: "Solana",
+  ton: "TON",
+  polkadot: "Polkadot",
+  theta: "Theta",
   exchange: "Exchange",
   ethereum: "Ethereum",
   polygon: "Polygon",
@@ -234,6 +240,11 @@ export const COINGECKO_PLATFORM: Record<EvmChain | "solana", string> = {
 export const COINGECKO_NATIVE_ID: Record<ChainId, string> = {
   bitcoin: "bitcoin",
   solana: "solana",
+  ton: "the-open-network",
+  polkadot: "polkadot",
+  // Theta is dual-token (THETA + TFUEL). The "native" id picked here is the
+  // governance token; TFUEL is priced separately inside the adapter.
+  theta: "theta-token",
   exchange: "",
   ethereum: "ethereum",
   polygon: "matic-network",
@@ -268,6 +279,9 @@ export const COINGECKO_NATIVE_ID: Record<ChainId, string> = {
 export const NATIVE_SYMBOL: Record<ChainId, string> = {
   bitcoin: "BTC",
   solana: "SOL",
+  ton: "TON",
+  polkadot: "DOT",
+  theta: "THETA",
   exchange: "",
   ethereum: "ETH",
   polygon: "MATIC",
@@ -301,6 +315,9 @@ export const NATIVE_SYMBOL: Record<ChainId, string> = {
 export const NATIVE_DECIMALS: Record<ChainId, number> = {
   bitcoin: 8,
   solana: 9,
+  ton: 9,
+  polkadot: 10,
+  theta: 18,
   exchange: 0,
   ethereum: 18,
   polygon: 18,

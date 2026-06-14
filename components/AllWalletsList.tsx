@@ -45,6 +45,9 @@ const CHAIN_TYPE_LABEL: Record<ChainType, string> = {
   btc: "Bitcoin",
   evm: "EVM",
   sol: "Solana",
+  ton: "TON",
+  dot: "Polkadot",
+  theta: "Theta",
 };
 
 /** Representative chain icon per ChainType — pick the most-recognized
@@ -53,6 +56,9 @@ const CHAIN_TYPE_TO_CHAIN: Record<ChainType, ChainId> = {
   btc: "bitcoin",
   evm: "ethereum",
   sol: "solana",
+  ton: "ton",
+  dot: "polkadot",
+  theta: "theta",
 };
 
 export function AllWalletsList({ wallets, btcPriceUsd }: Props) {

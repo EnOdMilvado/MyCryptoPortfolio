@@ -27,6 +27,9 @@ export interface Transaction {
 export const EXPLORER_TX: Record<ChainId, string> = {
   bitcoin: "https://blockstream.info",
   solana: "https://solscan.io",
+  ton: "https://tonviewer.com",
+  polkadot: "https://polkadot.subscan.io",
+  theta: "https://explorer.thetatoken.org",
   exchange: "",
   ethereum: "https://etherscan.io",
   polygon: "https://polygonscan.com",

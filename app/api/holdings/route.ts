@@ -4,6 +4,9 @@ import { detectChain } from "@/lib/chains/detect";
 import { fetchBitcoinHoldings } from "@/lib/chains/bitcoin";
 import { AlchemyKeyMissingError, fetchEvmHoldings } from "@/lib/chains/evm";
 import { fetchSolanaHoldings } from "@/lib/chains/solana";
+import { fetchTonHoldings } from "@/lib/chains/ton";
+import { fetchPolkadotHoldings, SubscanKeyMissingError } from "@/lib/chains/polkadot";
+import { fetchThetaHoldings } from "@/lib/chains/theta";
 import { getNativePrices } from "@/lib/chains/prices";
 import { getAlchemyPricesBySymbol } from "@/lib/chains/alchemy_prices";
 import { getPublicSpotUsdPrice } from "@/lib/chains/public_ticker";
@@ -58,6 +61,15 @@ async function fetchForWallet(w: WalletRow): Promise<WalletHoldings> {
       case "sol":
         holdings = await withTimeout(fetchSolanaHoldings(w.address), PER_WALLET_TIMEOUT_MS, "sol");
         break;
+      case "ton":
+        holdings = await withTimeout(fetchTonHoldings(w.address), PER_WALLET_TIMEOUT_MS, "ton");
+        break;
+      case "dot":
+        holdings = await withTimeout(fetchPolkadotHoldings(w.address), PER_WALLET_TIMEOUT_MS, "dot");
+        break;
+      case "theta":
+        holdings = await withTimeout(fetchThetaHoldings(w.address), PER_WALLET_TIMEOUT_MS, "theta");
+        break;
       default:
         holdings = [];
     }
@@ -77,6 +89,10 @@ async function fetchForWallet(w: WalletRow): Promise<WalletHoldings> {
     if (e instanceof AlchemyKeyMissingError) {
       console.error(
         `[holdings] EVM wallet ${w.id} (${w.address}): ALCHEMY_API_KEY missing/empty in process env`,
+      );
+    } else if (e instanceof SubscanKeyMissingError) {
+      console.error(
+        `[holdings] DOT wallet ${w.id} (${w.address}): SUBSCAN_API_KEY missing/empty in process env`,
       );
     } else {
       console.error(`[holdings] wallet ${w.id} (${w.chain_type}) failed:`, msg);
@@ -200,12 +216,26 @@ export async function POST(request: Request) {
     evmResults.length > 0 &&
     evmResults.every((r) => r.error === "ALCHEMY_API_KEY missing or empty");
 
+  // Same pattern for DOT: if every Polkadot wallet failed because
+  // SUBSCAN_API_KEY is unset, show the user one actionable banner.
+  const dotResults = results.filter((r) => r.chainType === "dot");
+  const allDotFailedOnKey =
+    dotResults.length > 0 &&
+    dotResults.every((r) => r.error === "SUBSCAN_API_KEY missing or empty");
+
+  let configError: string | null = null;
+  if (allEvmFailedOnKey) {
+    configError =
+      "ALCHEMY_API_KEY is missing or empty in the server environment — EVM wallets cannot be read. Set it in Vercel → Settings → Environment Variables and redeploy.";
+  } else if (allDotFailedOnKey) {
+    configError =
+      "SUBSCAN_API_KEY is missing or empty — Polkadot wallets cannot be read. Generate a free key at subscan.io/admin and add it to Vercel → Settings → Environment Variables.";
+  }
+
   return NextResponse.json({
     wallets: results,
     btcPriceUsd,
     fetchedAt: insertedAt,
-    configError: allEvmFailedOnKey
-      ? "ALCHEMY_API_KEY is missing or empty in the server environment — EVM wallets cannot be read. Set it in Vercel → Settings → Environment Variables and redeploy."
-      : null,
+    configError,
   });
 }

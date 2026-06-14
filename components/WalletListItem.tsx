@@ -13,6 +13,9 @@ const CHAIN_BADGE: Record<WalletDisplay["chainType"], string> = {
   btc: "₿",
   evm: "Ξ",
   sol: "◎",
+  ton: "💎",
+  dot: "●",
+  theta: "Θ",
 };
 
 export function WalletListItem({

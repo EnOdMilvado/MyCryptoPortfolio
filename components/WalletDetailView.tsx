@@ -20,6 +20,9 @@ const CHAIN_TYPE_LABEL: Record<ChainType, string> = {
   btc: "Bitcoin",
   evm: "EVM",
   sol: "Solana",
+  ton: "TON",
+  dot: "Polkadot",
+  theta: "Theta",
 };
 
 interface InitialHolding {
