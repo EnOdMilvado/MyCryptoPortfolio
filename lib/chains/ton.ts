@@ -44,6 +44,21 @@ interface TonJettonsResponse {
   balances: TonJettonBalance[];
 }
 
+interface TonNominatorPool {
+  pool: string;
+  // nanoTON integers (10^9 = 1 TON). Active stake + funds in flight to/from
+  // the pool. Tonkeeper's wallet UI sums all four into "Staked", so we
+  // mirror that here to keep the dashboard total matching Tonkeeper.
+  amount: number;
+  pending_deposit_amount: number;
+  pending_withdraw_amount: number;
+  ready_withdraw_amount: number;
+}
+
+interface TonStakingResponse {
+  pools: TonNominatorPool[];
+}
+
 async function getJson<T>(url: string): Promise<T | null> {
   const res = await fetch(url, { headers: { Accept: "application/json" } });
   if (!res.ok) {
@@ -62,14 +77,22 @@ function parsePercentString(s: string | undefined): number | null {
 }
 
 export async function fetchTonHoldings(address: string): Promise<Holding[]> {
-  // Fetch account + jettons in parallel. Use the user-friendly address
-  // form the user gave us — tonapi accepts both raw (0:hex) and user-
-  // friendly (EQ.../UQ...) forms.
-  const [account, jettons, nativeCg] = await Promise.all([
+  // Fetch account + jettons + nominator pools in parallel. Use the user-
+  // friendly address form the user gave us — tonapi accepts both raw
+  // (0:hex) and user-friendly (EQ.../UQ...) forms.
+  const [account, jettons, staking, nativeCg] = await Promise.all([
     getJson<TonAccount>(`${BASE}/accounts/${encodeURIComponent(address)}`),
     getJson<TonJettonsResponse>(
       `${BASE}/accounts/${encodeURIComponent(address)}/jettons?currencies=usd`,
     ),
+    // Tonkeeper "Queue" stakes and other nominator-pool stakes are NOT
+    // counted in the native balance — they're held by a separate pool
+    // contract. tonapi exposes them here. Soft-fail if this single call
+    // throws (rate limit / 5xx) so the native + jettons response still
+    // succeeds.
+    getJson<TonStakingResponse>(
+      `${BASE}/staking/nominator/${encodeURIComponent(address)}/pools`,
+    ).catch(() => null),
     getNativePricesWithChange([COINGECKO_NATIVE_ID.ton]),
   ]);
 
@@ -89,6 +112,40 @@ export async function fetchTonHoldings(address: string): Promise<Holding[]> {
       decimals: NATIVE_DECIMALS.ton,
       priceUsd: nativePrice,
       valueUsd: nativePrice ? nativeAmount * nativePrice : 0,
+      priceChange24h: nativeChange,
+    });
+  }
+
+  // Aggregate every nominator pool into a single "Staked TON" line so
+  // the total matches what Tonkeeper / TON wallet apps show. The pool
+  // address goes into a per-holding `contract` so the cache doesn't
+  // collide with the native row.
+  const pools = staking?.pools ?? [];
+  const stakedNano = pools.reduce(
+    (s, p) =>
+      s +
+      (p.amount ?? 0) +
+      (p.pending_deposit_amount ?? 0) +
+      (p.pending_withdraw_amount ?? 0) +
+      (p.ready_withdraw_amount ?? 0),
+    0,
+  );
+  const stakedAmount = stakedNano / 10 ** NATIVE_DECIMALS.ton;
+  if (stakedAmount > 0) {
+    out.push({
+      chain: "ton",
+      // Stable synthetic id so the cache distinguishes staked TON from
+      // native TON on the same wallet. Carries the pool count for
+      // debuggability when there are multiple pools.
+      contract: `staked:${pools.length}`,
+      symbol: "TON",
+      name: pools.length === 1 ? "Staked TON" : `Staked TON (${pools.length} pools)`,
+      amount: stakedAmount,
+      decimals: NATIVE_DECIMALS.ton,
+      // TON has a single price — re-use the native price so the staked
+      // line shows the same per-unit USD as the unstaked row.
+      priceUsd: nativePrice,
+      valueUsd: nativePrice ? stakedAmount * nativePrice : 0,
       priceChange24h: nativeChange,
     });
   }
