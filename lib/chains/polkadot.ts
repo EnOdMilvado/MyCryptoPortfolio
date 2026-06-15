@@ -25,7 +25,15 @@ import { getNativePricesWithChange } from "./prices";
  * one to return a usable response wins.
  */
 
-function endpoints(): string[] {
+/**
+ * Polkadot DOT lives in two places after the 2024 Asset Hub migration:
+ *   - relay chain (rpc.polkadot.io): bonded / nominator / vesting DOT
+ *   - Asset Hub: regular wallet balance (where most user funds now sit)
+ * Querying only the relay chain returns null for everyday wallets like
+ * the one connected via Nova / Talisman. Sum the two so totals match
+ * what users see in Subscan / Polkadot.js Apps.
+ */
+function relayEndpoints(): string[] {
   const list: string[] = [];
   const key = process.env.ALCHEMY_API_KEY;
   if (key) list.push(`https://polkadot-mainnet.g.alchemy.com/v2/${key}`);
@@ -33,6 +41,14 @@ function endpoints(): string[] {
   list.push("https://polkadot-rpc.publicnode.com");
   list.push("https://polkadot.api.onfinality.io/public");
   return list;
+}
+
+function assetHubEndpoints(): string[] {
+  return [
+    "https://polkadot-asset-hub-rpc.polkadot.io",
+    "https://statemint-rpc.polkadot.io",
+    "https://sys.ibp.network/asset-hub-polkadot",
+  ];
 }
 
 // Substrate's system.account storage key is:
@@ -78,22 +94,25 @@ async function rpcOne(
   return (await res.json()) as RpcResponse;
 }
 
-async function getStorage(key: string): Promise<string | null> {
+async function getStorageFrom(endpoints: string[], key: string): Promise<string | null> {
   let lastErr: string | null = null;
-  for (const url of endpoints()) {
+  for (const url of endpoints) {
     try {
       const r = await rpcOne(url, "state_getStorage", [key], 8000);
       if (r.error) {
         lastErr = r.error.message ?? `code ${r.error.code}`;
         continue;
       }
+      // First endpoint that answers without error wins — even if the
+      // answer is `null` (which on Polkadot just means "no account at
+      // this key", not "RPC broken").
       return r.result ?? null;
     } catch (e) {
       lastErr = e instanceof Error ? e.message : String(e);
     }
   }
   throw new Error(
-    `Polkadot RPC state_getStorage failed across ${endpoints().length} endpoints: ${lastErr ?? "unknown"}`,
+    `Polkadot state_getStorage failed across ${endpoints.length} endpoints: ${lastErr ?? "unknown"}`,
   );
 }
 
@@ -112,15 +131,9 @@ function readU128LE(hex: string, offsetBytes: number): bigint {
   return BigInt(`0x${be}`);
 }
 
-export async function fetchPolkadotHoldings(address: string): Promise<Holding[]> {
-  const key = storageKey(address);
-  const [raw, cg] = await Promise.all([
-    getStorage(key),
-    getNativePricesWithChange([COINGECKO_NATIVE_ID.polkadot]),
-  ]);
-  if (!raw) return [];
-
-  // AccountInfo layout (current Polkadot runtime):
+function decodeBalance(raw: string | null): bigint {
+  if (!raw) return 0n;
+  // AccountInfo layout (current Polkadot runtime, also used by Asset Hub):
   //   nonce        u32         offset 0
   //   consumers    u32         offset 4
   //   providers    u32         offset 8
@@ -129,9 +142,21 @@ export async function fetchPolkadotHoldings(address: string): Promise<Holding[]>
   //   data.reserved   u128     offset 32
   //   data.frozen     u128     offset 48  (lock cap — overlaps with free)
   //   data.flags      u128     offset 64
-  const free = readU128LE(raw, 16);
-  const reserved = readU128LE(raw, 32);
-  const planck = free + reserved;
+  return readU128LE(raw, 16) + readU128LE(raw, 32);
+}
+
+export async function fetchPolkadotHoldings(address: string): Promise<Holding[]> {
+  const key = storageKey(address);
+  // Fan out to relay + Asset Hub in parallel. Asset Hub holds regular
+  // wallet DOT after the 2024 migration; relay chain holds bonded /
+  // staking / vesting DOT. Sum both for the user-visible total. Allow
+  // either to soft-fail so a single chain outage doesn't void the row.
+  const [relayRaw, hubRaw, cg] = await Promise.all([
+    getStorageFrom(relayEndpoints(), key).catch(() => null),
+    getStorageFrom(assetHubEndpoints(), key).catch(() => null),
+    getNativePricesWithChange([COINGECKO_NATIVE_ID.polkadot]),
+  ]);
+  const planck = decodeBalance(relayRaw) + decodeBalance(hubRaw);
   if (planck === 0n) return [];
 
   const decimals = NATIVE_DECIMALS.polkadot;
