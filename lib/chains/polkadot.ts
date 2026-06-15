@@ -1,3 +1,4 @@
+import { ApiPromise, HttpProvider } from "@polkadot/api";
 import {
   COINGECKO_NATIVE_ID,
   NATIVE_DECIMALS,
@@ -7,79 +8,94 @@ import {
 import { getNativePricesWithChange } from "./prices";
 
 /**
- * Polkadot holdings via Subscan REST.
+ * Polkadot holdings via @polkadot/api over HTTP. Endpoint preference:
  *
- * Subscan requires an API key (free tier, sign up at subscan.io). The key
- * goes in the SUBSCAN_API_KEY env var; without it this adapter throws a
- * clear "missing key" error rather than silently returning zero.
+ *   1. ALCHEMY_API_KEY → https://polkadot-mainnet.g.alchemy.com/v2/{key}
+ *      (the user already has this key for EVM/Solana, so no extra setup).
+ *   2. Public RPC fallbacks (rpc.polkadot.io, etc.) when Alchemy fails
+ *      or the key isn't enabled for Polkadot.
  *
- * Why not native JSON-RPC: Polkadot's `system.account` storage item is
- * SCALE-encoded — fetching it via `state_getStorage` requires computing
- * an xxhash128 + blake2 storage key and decoding the response, which
- * pulls in a heavyweight SCALE-codec dependency for what should be a
- * tiny adapter. Subscan abstracts that away.
+ * @polkadot/api decodes SCALE for us — we just pull `data.free` and
+ * `data.reserved` off the standard `system.account` storage item.
+ * `frozen` overlaps with `free` (it's a lock flag, not a separate
+ * balance) so we sum free + reserved to match the figure Polkadot
+ * explorers show as "total".
  */
-const BASE = "https://polkadot.api.subscan.io";
 
-export class SubscanKeyMissingError extends Error {
-  constructor() {
-    super("SUBSCAN_API_KEY missing or empty");
-    this.name = "SubscanKeyMissingError";
-  }
-}
+const ENDPOINTS = (): string[] => {
+  const list: string[] = [];
+  const key = process.env.ALCHEMY_API_KEY;
+  if (key) list.push(`https://polkadot-mainnet.g.alchemy.com/v2/${key}`);
+  // Public fallbacks. Order: official → publicnode → 1rpc.
+  list.push("https://rpc.polkadot.io");
+  list.push("https://polkadot-rpc.publicnode.com");
+  return list;
+};
 
-interface SubscanAccountResp {
-  code: number;
-  message?: string;
-  data?: {
-    account?: {
-      // Subscan returns balances as decimal strings already scaled by
-      // 10^10 — i.e. "12.345" means 12.345 DOT, NOT 12.345 planck.
-      balance?: string;
-      balance_lock?: string;
-      reserved?: string;
-    };
-  };
-}
+// One @polkadot/api instance per Vercel lambda is fine — it's reused
+// across requests for the lifetime of the container. We keep the
+// first endpoint that succeeded so we don't have to walk the list
+// every call.
+let cachedApi: { url: string; api: Promise<ApiPromise> } | null = null;
 
-async function subscanGetBalance(address: string): Promise<number> {
-  const key = process.env.SUBSCAN_API_KEY;
-  if (!key) throw new SubscanKeyMissingError();
-  const res = await fetch(`${BASE}/api/v2/scan/search`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": key,
-    },
-    body: JSON.stringify({ key: address }),
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Subscan ${res.status}: ${body.slice(0, 160)}`);
+async function getApi(): Promise<ApiPromise> {
+  if (cachedApi) {
+    try {
+      const api = await cachedApi.api;
+      if (api.isConnected || api) return api;
+    } catch {
+      cachedApi = null;
+    }
   }
-  const json = (await res.json()) as SubscanAccountResp;
-  if (json.code !== 0) {
-    throw new Error(`Subscan code ${json.code}: ${json.message ?? "unknown"}`);
+  let lastErr: string | null = null;
+  for (const url of ENDPOINTS()) {
+    try {
+      const provider = new HttpProvider(url);
+      const api = ApiPromise.create({ provider, noInitWarn: true });
+      cachedApi = { url, api };
+      return await api;
+    } catch (e) {
+      lastErr = e instanceof Error ? e.message : String(e);
+      cachedApi = null;
+    }
   }
-  const acc = json.data?.account;
-  // Subscan ships balance already denominated in DOT (not planck). Sum
-  // free + reserved + locked to match the figure shown in the explorer.
-  const free = parseFloat(acc?.balance ?? "0");
-  const reserved = parseFloat(acc?.reserved ?? "0");
-  const locked = parseFloat(acc?.balance_lock ?? "0");
-  return (
-    (Number.isFinite(free) ? free : 0) +
-    (Number.isFinite(reserved) ? reserved : 0) +
-    (Number.isFinite(locked) ? locked : 0)
+  throw new Error(
+    `Polkadot RPC could not initialize across ${ENDPOINTS().length} endpoints: ${lastErr ?? "unknown"}`,
   );
 }
 
+interface AccountData {
+  free: string | number;
+  reserved: string | number;
+}
+interface AccountInfo {
+  data?: AccountData;
+}
+
 export async function fetchPolkadotHoldings(address: string): Promise<Holding[]> {
-  const [amount, cg] = await Promise.all([
-    subscanGetBalance(address),
+  const api = await getApi();
+  const [accountRaw, cg] = await Promise.all([
+    api.query.system.account(address),
     getNativePricesWithChange([COINGECKO_NATIVE_ID.polkadot]),
   ]);
-  if (amount <= 0) return [];
+  const account = accountRaw.toJSON() as AccountInfo;
+
+  // Substrate balances come back as either hex strings (for big numbers)
+  // or numbers. Use BigInt to avoid lossy float arithmetic on the planck
+  // values, then convert once at the very end.
+  function toBig(v: string | number | undefined): bigint {
+    if (v == null) return 0n;
+    if (typeof v === "number") return BigInt(v);
+    return v.startsWith("0x") ? BigInt(v) : BigInt(v);
+  }
+
+  const planck = toBig(account.data?.free) + toBig(account.data?.reserved);
+  if (planck === 0n) return [];
+
+  const decimals = NATIVE_DECIMALS.polkadot; // 10
+  // (planck / 10^decimals) without losing precision: convert once,
+  // dividing by Number(10^decimals).
+  const amount = Number(planck) / 10 ** decimals;
   const cgEntry = cg[COINGECKO_NATIVE_ID.polkadot];
   const price = cgEntry?.usd ?? null;
   const change = cgEntry?.change24h ?? null;
@@ -90,7 +106,7 @@ export async function fetchPolkadotHoldings(address: string): Promise<Holding[]>
       symbol: NATIVE_SYMBOL.polkadot,
       name: "Polkadot",
       amount,
-      decimals: NATIVE_DECIMALS.polkadot,
+      decimals,
       priceUsd: price,
       valueUsd: price ? amount * price : 0,
       priceChange24h: change,
