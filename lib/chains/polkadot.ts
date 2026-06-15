@@ -1,4 +1,5 @@
-import { ApiPromise, HttpProvider } from "@polkadot/api";
+import { decodeAddress, xxhashAsHex, blake2AsHex } from "@polkadot/util-crypto";
+import { u8aToHex } from "@polkadot/util";
 import {
   COINGECKO_NATIVE_ID,
   NATIVE_DECIMALS,
@@ -8,93 +9,132 @@ import {
 import { getNativePricesWithChange } from "./prices";
 
 /**
- * Polkadot holdings via @polkadot/api over HTTP. Endpoint preference:
+ * Polkadot holdings via direct JSON-RPC + manual SCALE decode.
  *
- *   1. ALCHEMY_API_KEY → https://polkadot-mainnet.g.alchemy.com/v2/{key}
- *      (the user already has this key for EVM/Solana, so no extra setup).
- *   2. Public RPC fallbacks (rpc.polkadot.io, etc.) when Alchemy fails
- *      or the key isn't enabled for Polkadot.
+ * Why not @polkadot/api ApiPromise: the library's create() flow fires a
+ * cascade of metadata RPCs (chain_getBlockHash, state_getRuntimeVersion,
+ * system_properties, rpc_methods, system_chain). Any single fetch-fail
+ * blocks the whole init for ~60s before throwing. From a Vercel sin1
+ * function that ran straight into the function-runtime timeout on the
+ * first DOT wallet refresh. The raw-RPC path below is one HTTP call —
+ * bounded by a per-endpoint AbortSignal so a slow host can't dominate
+ * the budget either.
  *
- * @polkadot/api decodes SCALE for us — we just pull `data.free` and
- * `data.reserved` off the standard `system.account` storage item.
- * `frozen` overlaps with `free` (it's a lock flag, not a separate
- * balance) so we sum free + reserved to match the figure Polkadot
- * explorers show as "total".
+ * Endpoint preference: Alchemy first (reuses ALCHEMY_API_KEY), then
+ * three public RPCs. Each gets ~8s before the next is tried; the first
+ * one to return a usable response wins.
  */
 
-const ENDPOINTS = (): string[] => {
+function endpoints(): string[] {
   const list: string[] = [];
   const key = process.env.ALCHEMY_API_KEY;
   if (key) list.push(`https://polkadot-mainnet.g.alchemy.com/v2/${key}`);
-  // Public fallbacks. Order: official → publicnode → 1rpc.
   list.push("https://rpc.polkadot.io");
   list.push("https://polkadot-rpc.publicnode.com");
+  list.push("https://polkadot.api.onfinality.io/public");
   return list;
-};
+}
 
-// One @polkadot/api instance per Vercel lambda is fine — it's reused
-// across requests for the lifetime of the container. We keep the
-// first endpoint that succeeded so we don't have to walk the list
-// every call.
-let cachedApi: { url: string; api: Promise<ApiPromise> } | null = null;
+// Substrate's system.account storage key is:
+//   xxhash128("System") + xxhash128("Account") + blake2_128(pubkey) + pubkey
+// The two xxhash128 prefixes are constants — compute them lazily once
+// and reuse forever to skip ~80µs of hashing per request.
+let cachedPrefix: string | null = null;
+function systemAccountPrefix(): string {
+  if (cachedPrefix) return cachedPrefix;
+  const s = xxhashAsHex("System", 128).slice(2);
+  const a = xxhashAsHex("Account", 128).slice(2);
+  cachedPrefix = `0x${s}${a}`;
+  return cachedPrefix;
+}
 
-async function getApi(): Promise<ApiPromise> {
-  if (cachedApi) {
-    try {
-      const api = await cachedApi.api;
-      if (api.isConnected || api) return api;
-    } catch {
-      cachedApi = null;
-    }
+function storageKey(address: string): string {
+  const pubkey = decodeAddress(address);
+  const hashed = blake2AsHex(pubkey, 128).slice(2);
+  const pkHex = u8aToHex(pubkey).slice(2);
+  return `${systemAccountPrefix()}${hashed}${pkHex}`;
+}
+
+interface RpcResponse {
+  result?: string | null;
+  error?: { code?: number; message?: string };
+}
+
+async function rpcOne(
+  url: string,
+  method: string,
+  params: unknown[],
+  timeoutMs: number,
+): Promise<RpcResponse> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!res.ok) {
+    throw new Error(`${res.status}`);
   }
+  return (await res.json()) as RpcResponse;
+}
+
+async function getStorage(key: string): Promise<string | null> {
   let lastErr: string | null = null;
-  for (const url of ENDPOINTS()) {
+  for (const url of endpoints()) {
     try {
-      const provider = new HttpProvider(url);
-      const api = ApiPromise.create({ provider, noInitWarn: true });
-      cachedApi = { url, api };
-      return await api;
+      const r = await rpcOne(url, "state_getStorage", [key], 8000);
+      if (r.error) {
+        lastErr = r.error.message ?? `code ${r.error.code}`;
+        continue;
+      }
+      return r.result ?? null;
     } catch (e) {
       lastErr = e instanceof Error ? e.message : String(e);
-      cachedApi = null;
     }
   }
   throw new Error(
-    `Polkadot RPC could not initialize across ${ENDPOINTS().length} endpoints: ${lastErr ?? "unknown"}`,
+    `Polkadot RPC state_getStorage failed across ${endpoints().length} endpoints: ${lastErr ?? "unknown"}`,
   );
 }
 
-interface AccountData {
-  free: string | number;
-  reserved: string | number;
-}
-interface AccountInfo {
-  data?: AccountData;
+/**
+ * Read an unsigned 128-bit little-endian integer out of a `0x`-prefixed
+ * hex string at the given byte offset.
+ */
+function readU128LE(hex: string, offsetBytes: number): bigint {
+  const start = 2 + offsetBytes * 2;
+  const slice = hex.slice(start, start + 32);
+  if (slice.length < 32) return 0n;
+  let be = "";
+  for (let i = slice.length - 2; i >= 0; i -= 2) {
+    be += slice.slice(i, i + 2);
+  }
+  return BigInt(`0x${be}`);
 }
 
 export async function fetchPolkadotHoldings(address: string): Promise<Holding[]> {
-  const api = await getApi();
-  const [accountRaw, cg] = await Promise.all([
-    api.query.system.account(address),
+  const key = storageKey(address);
+  const [raw, cg] = await Promise.all([
+    getStorage(key),
     getNativePricesWithChange([COINGECKO_NATIVE_ID.polkadot]),
   ]);
-  const account = accountRaw.toJSON() as AccountInfo;
+  if (!raw) return [];
 
-  // Substrate balances come back as either hex strings (for big numbers)
-  // or numbers. Use BigInt to avoid lossy float arithmetic on the planck
-  // values, then convert once at the very end.
-  function toBig(v: string | number | undefined): bigint {
-    if (v == null) return 0n;
-    if (typeof v === "number") return BigInt(v);
-    return v.startsWith("0x") ? BigInt(v) : BigInt(v);
-  }
-
-  const planck = toBig(account.data?.free) + toBig(account.data?.reserved);
+  // AccountInfo layout (current Polkadot runtime):
+  //   nonce        u32         offset 0
+  //   consumers    u32         offset 4
+  //   providers    u32         offset 8
+  //   sufficients  u32         offset 12
+  //   data.free       u128     offset 16
+  //   data.reserved   u128     offset 32
+  //   data.frozen     u128     offset 48  (lock cap — overlaps with free)
+  //   data.flags      u128     offset 64
+  const free = readU128LE(raw, 16);
+  const reserved = readU128LE(raw, 32);
+  const planck = free + reserved;
   if (planck === 0n) return [];
 
-  const decimals = NATIVE_DECIMALS.polkadot; // 10
-  // (planck / 10^decimals) without losing precision: convert once,
-  // dividing by Number(10^decimals).
+  const decimals = NATIVE_DECIMALS.polkadot;
   const amount = Number(planck) / 10 ** decimals;
   const cgEntry = cg[COINGECKO_NATIVE_ID.polkadot];
   const price = cgEntry?.usd ?? null;
