@@ -159,9 +159,14 @@ export function useAllHoldings(): CtxValue {
 export function AllHoldingsOverview({
   title = "All holdings",
   btcPriceUsd,
+  onHide,
 }: {
   title?: string;
   btcPriceUsd?: number | null;
+  /** When provided, the legend table gets a "Hide" column. Hiding an asset
+   *  removes all its holdings from this card, the pie and the total. The
+   *  handler receives the underlying per-holding keys. */
+  onHide?: (keys: string[]) => void;
 }) {
   const {
     allRows,
@@ -172,6 +177,19 @@ export function AllHoldingsOverview({
     setSelectedNetwork,
     focusAsset,
   } = useAllHoldings();
+
+  // Map each aggregated asset key → its underlying per-holding keys, so a
+  // single "Hide" click in the legend can hide every contributing row.
+  const assetToHoldingKeys = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const r of includedRows) {
+      const k = assetKey(r);
+      const arr = map.get(k);
+      if (arr) arr.push(holdingKey(r));
+      else map.set(k, [holdingKey(r)]);
+    }
+    return map;
+  }, [includedRows]);
   const { dark } = useTheme();
   // View selector — Table / Bars, persisted in localStorage so the
   // preference survives reloads. Defaults to the structured table.
@@ -414,6 +432,11 @@ export function AllHoldingsOverview({
           holdingsCount={includedRows.length}
           btcPriceUsd={btcPriceUsd}
           onSliceClick={focusAsset}
+          onHideSlice={
+            onHide
+              ? (key) => onHide(assetToHoldingKeys.get(key) ?? [])
+              : undefined
+          }
           mode="table"
         />
       )}
@@ -451,7 +474,17 @@ export function AllHoldingsOverview({
    Detail table — selectable rows, scoped to selected network.
    ============================================================ */
 
-export function AllHoldingsDetailTable({ title }: { title?: string }) {
+export function AllHoldingsDetailTable({
+  title,
+  hidden,
+  onToggleHide,
+}: {
+  title?: string;
+  /** Global hidden-holdings set + toggle (from the dashboard). When provided,
+   *  a leading "Hide" column lets the user remove a row from every table. */
+  hidden?: Set<string>;
+  onToggleHide?: (key: string) => void;
+}) {
   const {
     cleanRows,
     excluded,
@@ -483,6 +516,11 @@ export function AllHoldingsDetailTable({ title }: { title?: string }) {
           checked,
           onToggle: toggleHolding,
         }}
+        hideable={
+          hidden && onToggleHide
+            ? { getKey: holdingKey, hidden, onToggleHide }
+            : undefined
+        }
       />
     </section>
   );

@@ -7,7 +7,10 @@ import { supabaseBrowser } from "@/lib/supabase/browser";
 import { AddExchangeDialog } from "./AddExchangeDialog";
 import { AddOffchainBalanceDialog } from "./AddOffchainBalanceDialog";
 import { UsdValue } from "./MaskedValue";
+import { HoldingsTable, type HoldingRow } from "./HoldingsTable";
+import { useExcludedIds } from "./exchange/useExcludedIds";
 import { formatRelative } from "@/lib/format";
+import type { ChainId } from "@/lib/chains/types";
 
 export interface ExchangeRow {
   id: string;
@@ -16,8 +19,15 @@ export interface ExchangeRow {
   totalUsd: number;
   lastSyncedAt: string | null;
   balanceCount: number;
-  /** Per-asset breakdown — used to subtract user-excluded assets client-side. */
-  balances: { asset: string; valueUsd: number }[];
+  /** Per-asset breakdown — drives the inline holdings table and the
+   *  subtract-user-excluded-assets totals client-side. */
+  balances: {
+    asset: string;
+    amount: number;
+    priceUsd: number | null;
+    valueUsd: number;
+    priceChange24h: number | null;
+  }[];
 }
 
 /**
@@ -94,9 +104,11 @@ const KIND_LABEL: Record<string, string> = {
 export function ExchangesAndOffchain({
   exchanges,
   offchain,
+  btcPriceUsd = null,
 }: {
   exchanges: ExchangeRow[];
   offchain: OffchainRow[];
+  btcPriceUsd?: number | null;
 }) {
   const router = useRouter();
   const [refreshing, setRefreshing] = useState<string | null>(null);
@@ -234,78 +246,14 @@ export function ExchangesAndOffchain({
           </div>
           <ul className="space-y-2">
             {exchanges.map((ex) => (
-              <li
+              <ExchangeRowItem
                 key={ex.id}
-                className="group relative flex flex-wrap items-center justify-between gap-3 px-3 py-2 rounded-xl border border-border bg-surface-2/40 transition hover:border-primary/50"
-              >
-                <Link
-                  href={`/dashboard/exchange/${ex.id}`}
-                  className="absolute inset-0 z-0"
-                  aria-label={`Open ${ex.label}`}
-                />
-                <div className="min-w-0 flex-1 relative z-10 pointer-events-none">
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                    <span className="font-semibold text-text group-hover:text-primary">
-                      {ex.label}
-                    </span>
-                    <span className="pill">{ex.provider}</span>
-                    {(() => {
-                      const ex2 = excludes[ex.id] ?? new Set<string>();
-                      const top = [...ex.balances]
-                        .filter(
-                          (b) => b.valueUsd > 0 && !ex2.has(b.asset.toUpperCase()),
-                        )
-                        .sort((a, b) => b.valueUsd - a.valueUsd)
-                        .slice(0, 4);
-                      if (top.length === 0) return null;
-                      return (
-                        <span className="inline-flex flex-wrap items-center gap-1.5">
-                          {top.map((b) => (
-                            <span
-                              key={b.asset}
-                              className="inline-flex items-center gap-1 text-[11px] font-semibold text-text bg-surface-2 px-1.5 py-0.5 rounded"
-                              title={`${b.asset} · $${b.valueUsd.toFixed(2)}`}
-                            >
-                              {b.asset}
-                              <span className="text-text-muted font-normal tabular">
-                                ${compactUsd(b.valueUsd)}
-                              </span>
-                            </span>
-                          ))}
-                        </span>
-                      );
-                    })()}
-                  </div>
-                  <div className="text-xs text-text-muted mt-0.5">
-                    {ex.balanceCount} {ex.balanceCount === 1 ? "asset" : "assets"}
-                    {ex.lastSyncedAt
-                      ? ` · synced ${formatRelative(ex.lastSyncedAt)}`
-                      : " · never synced"}
-                  </div>
-                </div>
-                <div className="flex items-center gap-3 tabular shrink-0 relative z-10">
-                  <UsdValue
-                    value={adjustedTotal(ex)}
-                    priceUsd={adjustedTotal(ex) > 0 ? 1 : null}
-                    className="font-semibold"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => refresh(ex.id)}
-                    disabled={refreshing !== null}
-                    className="text-xs text-primary hover:text-primary-hover"
-                  >
-                    {refreshing === ex.id ? "…" : "Refresh"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => removeExchange(ex.id)}
-                    className="text-xs text-text-muted hover:text-danger"
-                  >
-                    Remove
-                  </button>
-                </div>
-              </li>
+                ex={ex}
+                btcPriceUsd={btcPriceUsd}
+                refreshing={refreshing}
+                onRefresh={() => refresh(ex.id)}
+                onRemove={() => removeExchange(ex.id)}
+              />
             ))}
           </ul>
         </div>
@@ -356,5 +304,179 @@ export function ExchangesAndOffchain({
         </p>
       )}
     </section>
+  );
+}
+
+/* -------------------- per-exchange expandable row -------------------- */
+
+/**
+ * One exchange in the dashboard card. Clicking the row toggles an inline
+ * holdings table (all spot balances) right below it; a separate "Open ↗"
+ * link still navigates to the full exchange page. Each asset has a checkbox
+ * that excludes it from totals — wired to the same
+ * `excluded-exchange-assets:{id}` localStorage set the exchange-detail page
+ * uses, so unchecking drops the asset from this card's total AND the main
+ * dashboard tables/charts (they listen for the storage event).
+ */
+function ExchangeRowItem({
+  ex,
+  btcPriceUsd,
+  refreshing,
+  onRefresh,
+  onRemove,
+}: {
+  ex: ExchangeRow;
+  btcPriceUsd: number | null;
+  refreshing: string | null;
+  onRefresh: () => void;
+  onRemove: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const { excluded, toggle } = useExcludedIds(`excluded-exchange-assets:${ex.id}`);
+
+  const adjusted = ex.balances.reduce(
+    (s, b) => (excluded.has(b.asset.toUpperCase()) ? s : s + b.valueUsd),
+    0,
+  );
+
+  const topChips = [...ex.balances]
+    .filter((b) => b.valueUsd > 0 && !excluded.has(b.asset.toUpperCase()))
+    .sort((a, b) => b.valueUsd - a.valueUsd)
+    .slice(0, 4);
+
+  // Synthesize HoldingRows so we can reuse HoldingsTable (sorting, dust
+  // filter, per-row include checkbox) for the inline asset list.
+  const rows: HoldingRow[] = ex.balances
+    .filter((b) => b.amount > 0 || b.valueUsd > 0)
+    .map((b) => ({
+      walletId: `exchange:${ex.id}`,
+      walletName: ex.label,
+      walletAddress: "",
+      portfolioId: undefined,
+      portfolioName: ex.provider.toUpperCase(),
+      chain: "exchange" as ChainId,
+      contract: `${ex.id}:${b.asset.toUpperCase()}`,
+      symbol: b.asset,
+      name: b.asset,
+      amount: b.amount,
+      priceUsd: b.priceUsd,
+      valueUsd: b.valueUsd,
+      priceChange24h: b.priceChange24h,
+      exchangeId: ex.id,
+    }));
+
+  const includedAssetKeys = new Set(
+    rows
+      .map((r) => (r.symbol ?? "").toUpperCase())
+      .filter((a) => !excluded.has(a)),
+  );
+
+  return (
+    <li className="rounded-xl border border-border bg-surface-2/40 transition hover:border-primary/50">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-2">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="group min-w-0 flex-1 text-left"
+          aria-expanded={open}
+        >
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className={`shrink-0 text-text-muted transition-transform ${open ? "rotate-180" : ""}`}
+              aria-hidden
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+            <span className="font-semibold text-text group-hover:text-primary">
+              {ex.label}
+            </span>
+            <span className="pill">{ex.provider}</span>
+            {topChips.length > 0 && (
+              <span className="inline-flex flex-wrap items-center gap-1.5">
+                {topChips.map((b) => (
+                  <span
+                    key={b.asset}
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-text bg-surface-2 px-1.5 py-0.5 rounded"
+                    title={`${b.asset} · $${b.valueUsd.toFixed(2)}`}
+                  >
+                    {b.asset}
+                    <span className="text-text-muted font-normal tabular">
+                      ${compactUsd(b.valueUsd)}
+                    </span>
+                  </span>
+                ))}
+              </span>
+            )}
+          </div>
+          <div className="text-xs text-text-muted mt-0.5 pl-[22px]">
+            {ex.balanceCount} {ex.balanceCount === 1 ? "asset" : "assets"}
+            {ex.lastSyncedAt
+              ? ` · synced ${formatRelative(ex.lastSyncedAt)}`
+              : " · never synced"}
+            {" · "}
+            {open ? "click to collapse" : "click to expand"}
+          </div>
+        </button>
+        <div className="flex items-center gap-3 tabular shrink-0">
+          <UsdValue
+            value={adjusted}
+            priceUsd={adjusted > 0 ? 1 : null}
+            className="font-semibold"
+          />
+          <Link
+            href={`/dashboard/exchange/${ex.id}`}
+            className="text-xs text-primary hover:text-primary-hover"
+          >
+            Open ↗
+          </Link>
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={refreshing !== null}
+            className="text-xs text-primary hover:text-primary-hover"
+          >
+            {refreshing === ex.id ? "…" : "Refresh"}
+          </button>
+          <button
+            type="button"
+            onClick={onRemove}
+            className="text-xs text-text-muted hover:text-danger"
+          >
+            Remove
+          </button>
+        </div>
+      </div>
+
+      {open && (
+        <div className="px-3 pb-3 pt-1 border-t border-border">
+          {rows.length === 0 ? (
+            <p className="text-sm text-text-muted py-4 text-center">
+              No spot balances cached yet — press Refresh.
+            </p>
+          ) : (
+            <HoldingsTable
+              rows={rows}
+              btcPriceUsd={btcPriceUsd}
+              groupColumn="network"
+              selectable={{
+                getKey: (r) => (r.symbol ?? "").toUpperCase(),
+                checked: includedAssetKeys,
+                onToggle: (k) => toggle(k),
+                header: "Incl",
+                ariaLabel: "Include this asset in totals",
+              }}
+            />
+          )}
+        </div>
+      )}
+    </li>
   );
 }

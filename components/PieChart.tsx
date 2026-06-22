@@ -133,6 +133,7 @@ export function PieChart({
   coinsCount,
   btcPriceUsd,
   onSliceClick,
+  onHideSlice,
   mode = "full",
 }: {
   slices: PieSlice[];
@@ -146,6 +147,10 @@ export function PieChart({
   /** When provided, slice + legend rows become clickable. The handler
    *  receives the slice.key (skipped for slices without a key). */
   onSliceClick?: (key: string) => void;
+  /** When provided, a leading "Hide" column appears in the legend table.
+   *  Checking it hides every holding of that asset everywhere (handler gets
+   *  the slice.key). Skipped for the "Other" bucket which has no single key. */
+  onHideSlice?: (key: string) => void;
   /** Layout mode: "full" = pie + table side-by-side, "table" = only the
    *  structured table, "pie" = only the donut centered with a compact
    *  legend below it. */
@@ -208,6 +213,11 @@ export function PieChart({
         <table className="w-full text-sm tabular border-collapse">
           <thead className="text-[11px] uppercase tracking-wide font-semibold text-text-muted">
             <tr className="border-b border-border">
+              {onHideSlice && (
+                <th className="text-left font-semibold px-2 py-2 whitespace-nowrap">
+                  Hide
+                </th>
+              )}
               <th className="text-left font-semibold px-2 py-2">Asset</th>
               <th className="text-left font-semibold px-2 py-2 whitespace-nowrap">Price</th>
               <th className="text-left font-semibold px-2 py-2 whitespace-nowrap">24h</th>
@@ -240,6 +250,23 @@ export function PieChart({
                   onClick={clickable ? () => onSliceClick!(s.key!) : undefined}
                   title={clickable ? `Click to see wallets holding ${s.label}` : undefined}
                 >
+                  {/* Hide */}
+                  {onHideSlice && (
+                    <td className="px-2 py-2 align-middle">
+                      {s.key && s.label !== "Other" ? (
+                        <input
+                          type="checkbox"
+                          checked={false}
+                          aria-label={`Hide ${s.label} from this card and the total`}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={() => onHideSlice(s.key!)}
+                          className="h-4 w-4 rounded border-border accent-primary cursor-pointer"
+                        />
+                      ) : (
+                        <span className="text-text-muted text-xs">—</span>
+                      )}
+                    </td>
+                  )}
                   {/* Asset */}
                   <td className="px-2 py-2 min-w-0">
                     <div className="flex items-center gap-2 min-w-0">
@@ -276,13 +303,10 @@ export function PieChart({
                       </span>
                     )}
                   </td>
-                  {/* Amount */}
+                  {/* Amount (number only — token symbol omitted) */}
                   <td className="px-2 py-2 text-left text-text-muted whitespace-nowrap">
                     {s.amount != null && s.amountSymbol ? (
-                      <>
-                        {formatAmount(s.amount)}{" "}
-                        <span className="opacity-60">{s.amountSymbol}</span>
-                      </>
+                      formatAmount(s.amount)
                     ) : (
                       <span className="opacity-60">{s.sub ?? "—"}</span>
                     )}
@@ -338,6 +362,7 @@ export function PieChart({
           </tbody>
           <tfoot className="border-t-2 border-border bg-surface-2/40">
             <tr className="font-bold text-text">
+              {onHideSlice && <td className="px-2 py-2" />}
               <td className="px-2 py-2 text-left text-xs uppercase tracking-wide text-text-muted">
                 Total
               </td>

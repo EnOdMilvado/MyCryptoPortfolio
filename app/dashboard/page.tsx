@@ -139,7 +139,11 @@ export default async function DashboardPage() {
     (ex) => {
       const balances = (ex.crypto_exchange_balances_cache ?? []).map((b) => ({
         asset: b.asset,
+        amount: Number(b.amount ?? 0),
+        priceUsd: b.price_usd == null ? null : Number(b.price_usd),
         valueUsd: Number(b.value_usd ?? 0),
+        priceChange24h:
+          b.price_change_24h == null ? null : Number(b.price_change_24h),
       }));
       const totalUsd = balances.reduce((s, b) => s + b.valueUsd, 0);
       return {
@@ -262,7 +266,7 @@ export default async function DashboardPage() {
           fearGreed={sentiment.fearGreed}
           altcoinSeason={sentiment.altcoinSeason}
           nftSummary={nftSummary}
-          beforeTables={<ExchangesAndOffchain key="exchanges-card" exchanges={exchanges} offchain={offchain} />}
+          beforeTables={<ExchangesAndOffchain key="exchanges-card" exchanges={exchanges} offchain={offchain} btcPriceUsd={btcPriceUsd} />}
         />
       </main>
     </>

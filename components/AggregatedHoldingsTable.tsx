@@ -43,6 +43,11 @@ function aggregateKey(r: HoldingRow): string {
   return `${r.chain}:${r.contract}`;
 }
 
+/** Stable per-holding key — matches the format used by the global hide set. */
+function holdingKey(r: HoldingRow): string {
+  return `${r.walletId}|${r.chain}|${r.contract}`;
+}
+
 function aggregate(rows: HoldingRow[]): AggregatedRow[] {
   const map = new Map<
     string,
@@ -106,12 +111,19 @@ const EXCLUDE_KEY = "crypto-aggregated-excluded";
 export function AggregatedHoldingsTable({
   rows,
   btcPriceUsd,
+  onHide,
 }: {
   rows: HoldingRow[];
   /** When provided, an extra BTC-value column is shown after USD. */
   btcPriceUsd?: number | null;
+  /** When provided, a leading "Hide" column appears. Checking it hides every
+   *  contributing holding of that asset from all tables/totals on the page.
+   *  (Rows shown here are always currently-visible, so the box reads
+   *  unchecked; restore is done from the "Hidden holdings" panel.) */
+  onHide?: (keys: string[]) => void;
 }) {
   const showBtc = btcPriceUsd != null && btcPriceUsd > 0;
+  const hideable = !!onHide;
   const { focusedAsset, focusAsset } = useAllHoldings();
   const [sortKey, setSortKey] = useState<SortKey>("totalUsd");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -354,6 +366,7 @@ export function AggregatedHoldingsTable({
           {/* 10 columns when showBtc, 9 otherwise:
               Include / Asset / Price / 24h / Amount / USD / [BTC] / % / Wallets / Address / CMC */}
           <colgroup>
+            {hideable && <col className="w-[8%] sm:w-[4%]" />}
             <col className="w-[8%] sm:w-[4%]" />
             <col className="w-[40%] sm:w-[14%]" />
             <col className="hidden sm:table-column sm:w-[10%]" />
@@ -368,6 +381,11 @@ export function AggregatedHoldingsTable({
           </colgroup>
           <thead className="bg-surface-2/80 text-text-muted sticky top-0 z-10 backdrop-blur-sm">
             <tr>
+              {hideable && (
+                <th className="px-2 py-2.5 text-center text-[10px] font-bold uppercase tracking-wide text-text-muted">
+                  Hide
+                </th>
+              )}
               <th className="px-2 py-2.5 text-center">
                 <span className="sr-only">Include</span>
               </th>
@@ -451,6 +469,19 @@ export function AggregatedHoldingsTable({
                     id={`agg-row-${r.key}`}
                     className={`${i % 2 ? "bg-surface-2/30" : ""} ${isChecked ? "" : "opacity-50"} scroll-mt-24`}
                   >
+                    {hideable && (
+                      <td className="px-2 py-2.5 align-middle text-center">
+                        <input
+                          type="checkbox"
+                          aria-label={`Hide ${r.symbol} from all tables and totals`}
+                          checked={false}
+                          onChange={() =>
+                            onHide!(r.contributors.map(holdingKey))
+                          }
+                          className="h-4 w-4 rounded border-border accent-primary cursor-pointer"
+                        />
+                      </td>
+                    )}
                     <td className="px-2 py-2.5 align-middle text-center">
                       <input
                         type="checkbox"
@@ -579,85 +610,69 @@ export function AggregatedHoldingsTable({
                   </tr>
                   {isExpanded && (
                     <tr key={`${r.key}-expand`} className="bg-surface-2/40">
-                      <td colSpan={showBtc ? 11 : 10} className="px-4 py-3">
+                      <td colSpan={(showBtc ? 11 : 10) + (hideable ? 1 : 0)} className="px-4 py-3">
                         <div className="text-xs text-text-muted mb-2">
                           {r.contributors.length}{" "}
                           {r.contributors.length === 1 ? "holding" : "holdings"} on{" "}
                           {r.networks.join(", ")}
+                          {hideable && <> · check to hide a row</>}
                         </div>
-                        {/* Invisible 6-column grid so each contributor row
-                            aligns at the same X — portfolio | wallet name |
-                            address | chain | amount | USD. Portfolio comes
-                            first (the container), wallet name second (the
-                            item inside it). No borders, reads like a clean
-                            tabular list. */}
-                        <div
-                          role="table"
-                          className="grid items-center gap-x-3 gap-y-1.5 text-sm grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_max-content_max-content_minmax(0,1fr)_max-content]"
-                        >
+                        {/* One flat row per contributor, sorted by USD value
+                            (largest first). Everything stays on a single line;
+                            the row scrolls horizontally on very narrow cards
+                            rather than wrapping each field onto its own line. */}
+                        <div className="space-y-1 overflow-x-auto">
                           {r.contributors
                             .slice()
                             .sort((a, b) => b.valueUsd - a.valueUsd)
                             .map((h, j) => (
                               <div
-                                role="row"
                                 key={`${h.walletId}-${h.chain}-${h.contract}-${j}`}
-                                className="contents"
+                                className="flex items-center gap-3 text-sm whitespace-nowrap py-0.5"
                               >
-                                <span
-                                  role="cell"
-                                  className="truncate"
-                                  title={h.portfolioName ?? ""}
-                                >
-                                  {h.portfolioId && h.portfolioName ? (
-                                    <Link
-                                      href={`/dashboard/portfolio/${h.portfolioId}`}
-                                      className="text-text-muted hover:text-primary hover:underline transition truncate"
-                                    >
-                                      {h.portfolioName}
-                                    </Link>
-                                  ) : (
-                                    <span className="text-text-muted">—</span>
-                                  )}
-                                </span>
-                                <span
-                                  role="cell"
-                                  className="truncate"
-                                  title={h.walletName}
-                                >
+                                {hideable && (
+                                  <input
+                                    type="checkbox"
+                                    checked={false}
+                                    onChange={() => onHide!([holdingKey(h)])}
+                                    aria-label={`Hide ${h.symbol ?? r.symbol} in ${h.walletName} from all tables and totals`}
+                                    title="Hide this holding"
+                                    className="h-4 w-4 rounded border-border accent-primary cursor-pointer shrink-0"
+                                  />
+                                )}
+                                <ChainPill chain={h.chain} size="xs" />
+                                <span className="font-semibold text-text truncate max-w-[12rem]">
                                   {h.portfolioId ? (
                                     <Link
                                       href={`/dashboard/portfolio/${h.portfolioId}/wallet/${h.walletId}`}
-                                      className="font-semibold text-text hover:text-primary hover:underline transition truncate"
+                                      className="hover:text-primary hover:underline transition"
+                                      title={h.walletName}
                                     >
                                       {h.walletName}
                                     </Link>
                                   ) : (
-                                    // No portfolio context — fall back to
-                                    // plain text. Shouldn't happen on the
-                                    // dashboard but keeps the type honest.
-                                    <span className="font-semibold">{h.walletName}</span>
+                                    <span title={h.walletName}>{h.walletName}</span>
                                   )}
                                 </span>
-                                <span
-                                  role="cell"
-                                  className="text-text-muted text-xs font-mono whitespace-nowrap"
-                                >
+                                {h.portfolioId && h.portfolioName && (
+                                  <Link
+                                    href={`/dashboard/portfolio/${h.portfolioId}`}
+                                    className="text-text-muted text-xs hover:text-primary hover:underline transition shrink-0"
+                                    title={h.portfolioName}
+                                  >
+                                    {h.portfolioName}
+                                  </Link>
+                                )}
+                                <span className="text-text-muted text-xs font-mono shrink-0">
                                   {shortenAddress(h.walletAddress, 6, 4)}
                                 </span>
-                                <span role="cell">
-                                  <ChainPill chain={h.chain} size="xs" />
-                                </span>
-                                <span
-                                  role="cell"
-                                  className="text-text-muted tabular text-left whitespace-nowrap"
-                                >
+                                <span className="ml-auto text-text-muted tabular shrink-0">
                                   {formatAmount(h.amount)}
                                 </span>
                                 <UsdValue
                                   value={h.valueUsd}
                                   priceUsd={h.priceUsd}
-                                  className="font-semibold tabular text-left min-w-[5rem] whitespace-nowrap"
+                                  className="font-semibold tabular text-right min-w-[5rem] shrink-0"
                                 />
                               </div>
                             ))}
@@ -671,7 +686,7 @@ export function AggregatedHoldingsTable({
             {sorted.length === 0 && (
               <tr>
                 <td
-                  colSpan={showBtc ? 11 : 10}
+                  colSpan={(showBtc ? 11 : 10) + (hideable ? 1 : 0)}
                   className="px-3 py-6 text-center text-text-muted"
                 >
                   No assets match the current filter
@@ -682,6 +697,7 @@ export function AggregatedHoldingsTable({
           {grandTotalUsd > 0 && (
             <tfoot className="border-t-2 border-border bg-surface-2/40">
               <tr className="font-bold text-text">
+                {hideable && <td className="px-2 py-2.5" />}
                 <td className="px-2 py-2.5" />
                 <td className="px-2 py-2.5 text-left text-xs uppercase tracking-wide text-text-muted">
                   Total

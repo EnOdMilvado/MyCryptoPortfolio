@@ -5,6 +5,7 @@ import { CHAIN_LABEL, type ChainId } from "@/lib/chains/types";
 import { formatAmount, formatBtc } from "@/lib/format";
 import { isLikelySpam } from "@/lib/spam";
 import { CmcLink } from "./CmcLink";
+import { ChainPill } from "./ChainPill";
 import { CopyButton } from "./CopyButton";
 import { tokenExplorerUrl } from "@/lib/chains/explorers";
 import { shortenAddress } from "@/lib/format";
@@ -106,7 +107,13 @@ function BtcCell({
  * The BTC column is omitted entirely when `btcPriceUsd` is null.
  * Coin name is folded under the Symbol cell as a small secondary line.
  */
-function buildColumns(btcPriceUsd: number | null | undefined): ColumnDef[] {
+function buildColumns(
+  btcPriceUsd: number | null | undefined,
+  /** "wallet" → show the owning wallet name (default, for cross-wallet views).
+   *  "network" → show the token's chain instead (for single-wallet tables
+   *  where every row shares the same wallet). */
+  groupColumn: "wallet" | "network" = "wallet",
+): ColumnDef[] {
   const cols: ColumnDef[] = [
     {
       key: "symbol",
@@ -212,19 +219,27 @@ function buildColumns(btcPriceUsd: number | null | undefined): ColumnDef[] {
       // render empty here and computing in the table-body section below.
       render: () => null,
     },
-    {
-      key: "walletName",
-      label: "Wallet",
-      filterValue: (r) =>
-        `${r.walletName} ${CHAIN_LABEL[r.chain]}`.toLowerCase(),
-      render: (r) => (
-        <div className="min-w-0 max-w-[10rem]">
-          <span className="text-sm truncate" title={r.walletName}>
-            {r.walletName}
-          </span>
-        </div>
-      ),
-    },
+    groupColumn === "network"
+      ? {
+          key: "chain",
+          label: "Network",
+          filterValue: (r) =>
+            `${CHAIN_LABEL[r.chain] ?? r.chain}`.toLowerCase(),
+          render: (r) => <ChainPill chain={r.chain} size="xs" />,
+        }
+      : {
+          key: "walletName",
+          label: "Wallet",
+          filterValue: (r) =>
+            `${r.walletName} ${CHAIN_LABEL[r.chain]}`.toLowerCase(),
+          render: (r) => (
+            <div className="min-w-0 max-w-[10rem]">
+              <span className="text-sm truncate" title={r.walletName}>
+                {r.walletName}
+              </span>
+            </div>
+          ),
+        },
     {
       key: "address",
       label: "Address",
@@ -272,19 +287,44 @@ export interface HoldingsSelection {
   getKey: (r: HoldingRow) => string;
   checked: Set<string>;
   onToggle: (key: string) => void;
+  /** Optional visible header for the checkbox column (e.g. "TAX"). When
+   *  omitted the column header stays screen-reader-only ("Include"). */
+  header?: string;
+  /** Per-row aria-label for the checkbox. Defaults to "Include in summary". */
+  ariaLabel?: string;
+}
+
+/** Optional leading "Hide" column. Checking it hides the row from every
+ *  table/chart/total on the page; unchecking restores it. The checkbox is
+ *  checked when the row's key is in `hidden` (used by the restore panel,
+ *  where the listed rows are all hidden). */
+export interface HoldingsHideable {
+  getKey: (r: HoldingRow) => string;
+  hidden: Set<string>;
+  onToggleHide: (key: string) => void;
 }
 
 export function HoldingsTable({
   rows,
   selectable,
+  hideable,
   btcPriceUsd,
+  groupColumn = "wallet",
 }: {
   rows: HoldingRow[];
   selectable?: HoldingsSelection;
+  /** Optional leading "Hide" checkbox column (hides the row everywhere). */
+  hideable?: HoldingsHideable;
   /** When provided, an extra "BTC value" column is shown after USD. */
   btcPriceUsd?: number | null;
+  /** Whether the grouping column shows the wallet name (default) or the
+   *  token's network. Use "network" inside single-wallet tables. */
+  groupColumn?: "wallet" | "network";
 }) {
-  const COLUMNS = useMemo(() => buildColumns(btcPriceUsd), [btcPriceUsd]);
+  const COLUMNS = useMemo(
+    () => buildColumns(btcPriceUsd, groupColumn),
+    [btcPriceUsd, groupColumn],
+  );
   const [sortKey, setSortKey] = useState<SortKey>("valueUsd");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [filters, setFilters] = useState<Partial<Record<SortKey, string>>>({});
@@ -457,9 +497,14 @@ export function HoldingsTable({
           <table className="w-full text-sm table-auto">
           <thead className="bg-surface-2/80 text-text-muted sticky top-0 z-10 backdrop-blur-sm">
             <tr>
+              {hideable && (
+                <th className="px-2 py-2 text-left whitespace-nowrap w-10 text-[10px] font-bold uppercase tracking-wide text-text-muted">
+                  Hide
+                </th>
+              )}
               {selectable && (
-                <th className="px-2 py-2 text-left whitespace-nowrap w-8">
-                  <span className="sr-only">Include</span>
+                <th className="px-2 py-2 text-left whitespace-nowrap w-10 text-[10px] font-bold uppercase tracking-wide text-text-muted">
+                  {selectable.header ?? <span className="sr-only">Include</span>}
                 </th>
               )}
               {COLUMNS.map((c) => {
@@ -498,11 +543,22 @@ export function HoldingsTable({
                   key={`${r.walletId}-${r.chain}-${r.contract}`}
                   className={`${i % 2 ? "bg-surface-2/30" : ""} ${selectable && !isChecked ? "opacity-50" : ""}`}
                 >
+                  {hideable && (
+                    <td className="px-2 py-2 align-middle">
+                      <input
+                        type="checkbox"
+                        aria-label="Hide this holding from all tables and totals"
+                        checked={hideable.hidden.has(hideable.getKey(r))}
+                        onChange={() => hideable.onToggleHide(hideable.getKey(r))}
+                        className="h-4 w-4 rounded border-border accent-primary cursor-pointer"
+                      />
+                    </td>
+                  )}
                   {selectable && (
                     <td className="px-2 py-2 align-middle">
                       <input
                         type="checkbox"
-                        aria-label="Include in summary"
+                        aria-label={selectable.ariaLabel ?? "Include in summary"}
                         checked={isChecked}
                         onChange={() => selectable.onToggle(key!)}
                         className="h-4 w-4 rounded border-border accent-primary cursor-pointer"
@@ -531,7 +587,7 @@ export function HoldingsTable({
             {sorted.length === 0 && (
               <tr>
                 <td
-                  colSpan={COLUMNS.length + (selectable ? 1 : 0)}
+                  colSpan={COLUMNS.length + (selectable ? 1 : 0) + (hideable ? 1 : 0)}
                   className="px-3 py-6 text-center text-text-muted"
                 >
                   No rows match the current filters
@@ -553,6 +609,7 @@ export function HoldingsTable({
             return (
               <tfoot className="border-t-2 border-border bg-surface-2/40">
                 <tr className="font-bold text-text">
+                  {hideable && <td className="px-2 py-2" />}
                   {selectable && <td className="px-2 py-2" />}
                   {COLUMNS.map((c) => {
                     if (c.key === "symbol") {

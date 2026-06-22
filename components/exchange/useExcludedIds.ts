@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
  * Persisted Set of IDs (uppercased) stored in localStorage. Used by the
@@ -8,6 +8,13 @@ import { useCallback, useEffect, useState } from "react";
  */
 export function useExcludedIds(storageKey: string) {
   const [excluded, setExcluded] = useState<Set<string>>(() => new Set());
+  // Mirror of the current set so `toggle` can compute the next value WITHOUT
+  // doing side effects inside a setState updater (updaters run during the
+  // render phase — dispatching a storage event there would call other
+  // components' listeners mid-render and trigger React's "setState while
+  // rendering" error).
+  const excludedRef = useRef(excluded);
+  excludedRef.current = excluded;
 
   useEffect(() => {
     try {
@@ -24,21 +31,21 @@ export function useExcludedIds(storageKey: string) {
   const toggle = useCallback(
     (id: string) => {
       const upper = id.toUpperCase();
-      setExcluded((prev) => {
-        const next = new Set(prev);
-        if (next.has(upper)) next.delete(upper);
-        else next.add(upper);
-        try {
-          window.localStorage.setItem(storageKey, JSON.stringify([...next]));
-          // Notify listeners in this same tab. The native `storage` event only
-          // fires in OTHER tabs, so we emit a manual one for the dashboard
-          // ExchangesAndOffchain card to recompute its total.
-          window.dispatchEvent(new StorageEvent("storage", { key: storageKey }));
-        } catch {
-          // ignore quota errors
-        }
-        return next;
-      });
+      const next = new Set(excludedRef.current);
+      if (next.has(upper)) next.delete(upper);
+      else next.add(upper);
+      excludedRef.current = next;
+      setExcluded(next);
+      // Side effects happen here, in the event handler — never inside the
+      // updater. The native `storage` event only fires in OTHER tabs, so we
+      // emit a manual one for same-tab listeners (the ExchangesAndOffchain
+      // card and the dashboard) to recompute their totals.
+      try {
+        window.localStorage.setItem(storageKey, JSON.stringify([...next]));
+        window.dispatchEvent(new StorageEvent("storage", { key: storageKey }));
+      } catch {
+        // ignore quota errors
+      }
     },
     [storageKey],
   );

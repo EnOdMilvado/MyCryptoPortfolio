@@ -30,8 +30,14 @@ import { supabaseBrowser } from "@/lib/supabase/browser";
 import { SortableSectionsLayout, type PageSection } from "./SortableSectionsLayout";
 import { WalletsTable } from "./WalletsTable";
 import type { HoldingRow } from "./HoldingsTable";
+import { HiddenHoldingsPanel } from "./HiddenHoldingsPanel";
 import { useExchangeAssetExcludes } from "./exchange/useExchangeAssetExcludes";
 import type { ReactNode } from "react";
+
+/** Stable per-holding key for the global hide set. */
+function holdingKey(r: HoldingRow): string {
+  return `${r.walletId}|${r.chain}|${r.contract}`;
+}
 
 interface PortfolioMeta {
   id: string;
@@ -57,6 +63,7 @@ interface Props {
 
 const EXCLUDE_PORTFOLIOS_KEY = "crypto-excluded-portfolios";
 const EXCLUDE_WALLETS_KEY = "crypto-excluded-wallets";
+const HIDDEN_HOLDINGS_KEY = "crypto-hidden-holdings";
 
 export function DashboardClient({
   email,
@@ -72,6 +79,7 @@ export function DashboardClient({
 }: Props) {
   const [excludedPortfolios, setExcludedPortfolios] = useState<Set<string>>(new Set());
   const [excludedWallets, setExcludedWallets] = useState<Set<string>>(new Set());
+  const [hiddenHoldings, setHiddenHoldings] = useState<Set<string>>(new Set());
   const [editingPortfolios, setEditingPortfolios] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
   // Local ordering — derived from props but mutated by reorder actions so we
@@ -86,6 +94,8 @@ export function DashboardClient({
       if (ep) setExcludedPortfolios(new Set(JSON.parse(ep) as string[]));
       const ew = window.localStorage.getItem(EXCLUDE_WALLETS_KEY);
       if (ew) setExcludedWallets(new Set(JSON.parse(ew) as string[]));
+      const hh = window.localStorage.getItem(HIDDEN_HOLDINGS_KEY);
+      if (hh) setHiddenHoldings(new Set(JSON.parse(hh) as string[]));
     } catch {}
     setViewMode(readViewMode("crypto-portfolio-view"));
   }, []);
@@ -165,6 +175,37 @@ export function DashboardClient({
     });
   }
 
+  function persistHidden(next: Set<string>) {
+    try {
+      window.localStorage.setItem(HIDDEN_HOLDINGS_KEY, JSON.stringify([...next]));
+    } catch {}
+  }
+  // Flip one holding's hidden state (used by the per-row "Hide" checkbox and
+  // the restore panel).
+  function toggleHidden(key: string) {
+    setHiddenHoldings((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      persistHidden(next);
+      return next;
+    });
+  }
+  // Hide a batch at once (the aggregated table hides every contributor of an
+  // asset in one click).
+  function hideMany(keys: string[]) {
+    setHiddenHoldings((prev) => {
+      const next = new Set(prev);
+      for (const k of keys) next.add(k);
+      persistHidden(next);
+      return next;
+    });
+  }
+  function restoreAllHidden() {
+    setHiddenHoldings(new Set());
+    persistHidden(new Set());
+  }
+
   // Build wallet → portfolio map.
   const walletToPortfolio = useMemo(() => {
     const map = new Map<string, string>();
@@ -195,9 +236,20 @@ export function DashboardClient({
   }, [holdings]);
   const exchangeExcludes = useExchangeAssetExcludes(exchangeIds);
 
+  // Globally-hidden holdings (the per-row "Hide" checkbox) are stripped first
+  // so they vanish from EVERY table, chart, tile and total below.
+  const visibleHoldings = useMemo(
+    () => holdings.filter((h) => !hiddenHoldings.has(holdingKey(h))),
+    [holdings, hiddenHoldings],
+  );
+  const hiddenRows = useMemo(
+    () => holdings.filter((h) => hiddenHoldings.has(holdingKey(h))),
+    [holdings, hiddenHoldings],
+  );
+
   const includedHoldings = useMemo(
     () =>
-      holdings.filter((h) => {
+      visibleHoldings.filter((h) => {
         if (effectiveExcludedWallets.has(h.walletId)) return false;
         if (h.exchangeId && h.symbol) {
           const ex = exchangeExcludes[h.exchangeId];
@@ -205,7 +257,7 @@ export function DashboardClient({
         }
         return true;
       }),
-    [holdings, effectiveExcludedWallets, exchangeExcludes],
+    [visibleHoldings, effectiveExcludedWallets, exchangeExcludes],
   );
 
   // Per-portfolio totals + wallet counts based on the *included* holdings.
@@ -216,8 +268,7 @@ export function DashboardClient({
       const usableWallets = isPortfolioOff ? [] : activeWallets;
       let totalUsd = 0;
       let holdingCount = 0;
-      for (const h of holdings) {
-        if (h.walletId in {}) continue; // noop typescript hint
+      for (const h of visibleHoldings) {
         if (!usableWallets.includes(h.walletId)) continue;
         totalUsd += h.valueUsd;
         holdingCount += 1;
@@ -231,7 +282,7 @@ export function DashboardClient({
         totalBtc: btcPriceUsd ? totalUsd / btcPriceUsd : 0,
       };
     });
-  }, [portfolios, excludedPortfolios, excludedWallets, holdings, btcPriceUsd]);
+  }, [portfolios, excludedPortfolios, excludedWallets, visibleHoldings, btcPriceUsd]);
 
   const allWalletIds = useMemo(
     () => portfolios.flatMap((p) => p.walletIds),
@@ -294,7 +345,12 @@ export function DashboardClient({
           viewMode={viewMode}
           setView={setView}
           nftSummary={nftSummary}
-          holdings={holdings}
+          holdings={visibleHoldings}
+          hiddenRows={hiddenRows}
+          hiddenHoldings={hiddenHoldings}
+          toggleHidden={toggleHidden}
+          hideMany={hideMany}
+          restoreAllHidden={restoreAllHidden}
           beforeTables={beforeTables}
         />
       )}
@@ -332,6 +388,11 @@ function DashboardSections({
   setView,
   nftSummary,
   holdings,
+  hiddenRows,
+  hiddenHoldings,
+  toggleHidden,
+  hideMany,
+  restoreAllHidden,
   beforeTables,
 }: {
   snapshots: Snapshot[];
@@ -356,6 +417,12 @@ function DashboardSections({
   setView: (v: ViewMode) => void;
   nftSummary?: NftSummary;
   holdings: HoldingRow[];
+  /** Holdings the user has globally hidden — listed in the restore panel. */
+  hiddenRows: HoldingRow[];
+  hiddenHoldings: Set<string>;
+  toggleHidden: (key: string) => void;
+  hideMany: (keys: string[]) => void;
+  restoreAllHidden: () => void;
   beforeTables?: ReactNode;
 }) {
   const portfoliosNode = (() => {
@@ -514,6 +581,7 @@ function DashboardSections({
         <AllHoldingsOverview
           title="All holdings across active portfolios"
           btcPriceUsd={btcPriceUsd}
+          onHide={hideMany}
         />
       ),
     });
@@ -531,9 +599,30 @@ function DashboardSections({
       label: "All holdings",
       node: (
         <div className="space-y-8">
-          <AggregatedHoldingsTable rows={includedHoldings} btcPriceUsd={btcPriceUsd} />
-          <AllHoldingsDetailTable title="Every holding (one row per wallet × token)" />
+          <AggregatedHoldingsTable
+            rows={includedHoldings}
+            btcPriceUsd={btcPriceUsd}
+            onHide={hideMany}
+          />
+          <AllHoldingsDetailTable
+            title="Every holding (one row per wallet × token)"
+            hidden={hiddenHoldings}
+            onToggleHide={toggleHidden}
+          />
         </div>
+      ),
+    });
+  }
+  if (hiddenRows.length > 0) {
+    sections.push({
+      id: "hidden-holdings",
+      label: "Hidden",
+      node: (
+        <HiddenHoldingsPanel
+          hiddenRows={hiddenRows}
+          onUnhide={toggleHidden}
+          onRestoreAll={restoreAllHidden}
+        />
       ),
     });
   }

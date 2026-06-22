@@ -32,6 +32,37 @@ interface RawPortfolio {
     | null;
 }
 
+interface RawExBalance {
+  asset: string;
+  amount: number | string | null;
+  price_usd: number | string | null;
+  value_usd: number | string | null;
+  price_change_24h: number | string | null;
+}
+interface RawExchange {
+  id: string;
+  provider: string;
+  label: string;
+  last_synced_at: string | null;
+  crypto_exchange_balances_cache: RawExBalance[] | null;
+}
+interface RawOffchain {
+  id: string;
+  label: string;
+  kind: string;
+  currency: string;
+  amount: number | string;
+  created_at: string | null;
+}
+
+const OFFCHAIN_KIND_LABEL: Record<string, string> = {
+  cash: "Cash",
+  bank: "Bank",
+  credit_card: "Credit card",
+  brokerage: "Brokerage",
+  other: "Other",
+};
+
 /**
  * Unified wallets page: every wallet the user owns, across all
  * portfolios, in one list sorted largest-to-smallest by USD value.
@@ -103,6 +134,7 @@ export default async function WalletsPage() {
         string | null
       >((acc, h) => (acc == null || h.fetched_at > acc ? h.fetched_at : acc), null);
       groups.push({
+        kind: "wallet",
         walletId: w.id,
         walletName: w.name,
         walletAddress: w.address,
@@ -112,9 +144,87 @@ export default async function WalletsPage() {
         totalUsd,
         holdings: rows,
         lastFetchedAt: fetchedAtMax,
+        expandable: true,
       });
     }
   }
+
+  // Exchanges (CEX). Each exchange becomes a "wallet" whose holdings are its
+  // synthesised spot balances — same HoldingRow shape the dashboard uses so
+  // they merge naturally and carry per-asset tax toggles.
+  const { data: exRowsFull } = await supabase
+    .from("crypto_exchanges")
+    .select(
+      "id, provider, label, last_synced_at, crypto_exchange_balances_cache ( asset, amount, price_usd, value_usd, price_change_24h )",
+    )
+    .order("created_at", { ascending: true });
+
+  for (const ex of (exRowsFull as RawExchange[] | null) ?? []) {
+    const rows: HoldingRow[] = [];
+    for (const b of ex.crypto_exchange_balances_cache ?? []) {
+      const amount = Number(b.amount ?? 0);
+      if (!Number.isFinite(amount) || amount <= 0) continue;
+      rows.push({
+        walletId: `exchange:${ex.id}`,
+        walletName: ex.label,
+        walletAddress: "",
+        portfolioId: undefined,
+        portfolioName: ex.provider.toUpperCase(),
+        chain: "exchange" as ChainId,
+        contract: `${ex.id}:${b.asset.toUpperCase()}`,
+        symbol: b.asset,
+        name: b.asset,
+        amount,
+        priceUsd: b.price_usd == null ? null : Number(b.price_usd),
+        valueUsd: b.value_usd == null ? 0 : Number(b.value_usd),
+        priceChange24h:
+          b.price_change_24h == null ? null : Number(b.price_change_24h),
+        exchangeId: ex.id,
+      });
+    }
+    groups.push({
+      kind: "exchange",
+      walletId: `exchange:${ex.id}`,
+      walletName: ex.label,
+      walletAddress: "",
+      chainType: null,
+      badge: ex.provider.toUpperCase(),
+      portfolioId: null,
+      portfolioName: "Exchange",
+      totalUsd: rows.reduce((s, r) => s + r.valueUsd, 0),
+      holdings: rows,
+      lastFetchedAt: ex.last_synced_at,
+      expandable: rows.length > 0,
+    });
+  }
+
+  // Off-chain balances (cash, bank, brokerage, …). Single manual value each,
+  // so they show as a non-expandable row with just the wallet-level TAX toggle.
+  const { data: ocRows } = await supabase
+    .from("crypto_offchain_balances")
+    .select("id, label, kind, currency, amount, created_at")
+    .order("created_at", { ascending: true });
+
+  for (const o of (ocRows as RawOffchain[] | null) ?? []) {
+    const amount = Number(o.amount ?? 0);
+    groups.push({
+      kind: "offchain",
+      walletId: `offchain:${o.id}`,
+      walletName: o.label,
+      walletAddress: "",
+      chainType: null,
+      badge: OFFCHAIN_KIND_LABEL[o.kind] ?? o.kind,
+      portfolioId: null,
+      portfolioName: o.currency,
+      // For now treat all currencies as 1:1 USD (manual entry) — same as the
+      // dashboard. Future: FX rates.
+      totalUsd: amount,
+      holdings: [],
+      lastFetchedAt: o.created_at ?? null,
+      expandable: false,
+    });
+  }
+
   groups.sort((a, b) => b.totalUsd - a.totalUsd);
 
   return (
