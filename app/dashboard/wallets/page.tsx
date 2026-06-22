@@ -109,6 +109,29 @@ export default async function WalletsPage() {
     .maybeSingle();
   if (btcRow?.price_usd) btcPriceUsd = Number(btcRow.price_usd);
 
+  // Tax-inclusion marks (moved from localStorage to the DB so a shared
+  // accountant link reflects exactly what the owner marked).
+  const { data: taxRows } = await supabase
+    .from("crypto_tax_excludes")
+    .select("kind, key");
+  const initialTaxWallets = (taxRows ?? [])
+    .filter((r: { kind: string; key: string }) => r.kind === "wallet")
+    .map((r: { key: string }) => r.key);
+  const initialTaxHoldings = (taxRows ?? [])
+    .filter((r: { kind: string; key: string }) => r.kind === "holding")
+    .map((r: { key: string }) => r.key);
+
+  // Existing share link (if any) for the share-with-accountant button.
+  const { data: shareRow } = await supabase
+    .from("crypto_shares")
+    .select("token")
+    .eq("scope", "accountant")
+    .is("revoked_at", null)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const existingShareToken: string | null = shareRow?.token ?? null;
+
   // Flatten portfolios → wallets, compute per-wallet total, sort desc.
   const groups: WalletGroup[] = [];
   for (const p of (rawPortfolios as RawPortfolio[] | null) ?? []) {
@@ -238,7 +261,14 @@ export default async function WalletsPage() {
         }}
       />
       <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 space-y-6">
-        <AllWalletsList wallets={groups} btcPriceUsd={btcPriceUsd} />
+        <AllWalletsList
+          wallets={groups}
+          btcPriceUsd={btcPriceUsd}
+          userId={user.id}
+          initialTaxWallets={initialTaxWallets}
+          initialTaxHoldings={initialTaxHoldings}
+          existingShareToken={existingShareToken}
+        />
       </main>
     </>
   );

@@ -1,7 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { supabaseBrowser } from "@/lib/supabase/browser";
 import { HoldingsTable, type HoldingRow } from "./HoldingsTable";
+import { ShareAccountantButton } from "./ShareAccountantButton";
 import { TransactionsTable } from "./TransactionsTable";
 import { DownloadCsvButton } from "./DownloadCsvButton";
 import { ChainPill } from "./ChainPill";
@@ -50,66 +52,119 @@ export interface WalletGroup {
 interface Props {
   wallets: WalletGroup[];
   btcPriceUsd: number | null;
+  /** Logged-in owner id — needed to write tax marks to the DB. */
+  userId: string;
+  /** Tax-excluded wallet keys + holding keys, loaded from the DB server-side. */
+  initialTaxWallets: string[];
+  initialTaxHoldings: string[];
+  /** Active accountant share token, if one already exists. */
+  existingShareToken: string | null;
 }
 
-/** localStorage keys for the tax-exclusion toggles. Mirrors the app's other
- *  exclude sets (wallets / holdings / exchange assets) which all live in
- *  localStorage as JSON string arrays. */
+/** Legacy localStorage keys — read once to migrate old marks into the DB. */
 const TAX_WALLETS_KEY = "crypto-tax-excluded-wallets";
 const TAX_HOLDINGS_KEY = "crypto-tax-excluded-holdings";
-
-/** A Set<string> persisted to localStorage, with cross-tab sync. Returns the
- *  current set and a toggle that flips membership and re-persists. */
-function usePersistentSet(
-  storageKey: string,
-): [Set<string>, (id: string) => void] {
-  const [set, setSet] = useState<Set<string>>(new Set());
-
-  const read = useCallback((): Set<string> => {
-    try {
-      const raw = window.localStorage.getItem(storageKey);
-      if (raw) {
-        const arr = JSON.parse(raw) as unknown;
-        if (Array.isArray(arr)) return new Set(arr.map(String));
-      }
-    } catch {
-      // ignore corrupt entry
-    }
-    return new Set();
-  }, [storageKey]);
-
-  useEffect(() => {
-    setSet(read());
-    function onStorage(e: StorageEvent) {
-      if (e.key === null || e.key === storageKey) setSet(read());
-    }
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, [read, storageKey]);
-
-  const toggle = useCallback(
-    (id: string) => {
-      setSet((prev) => {
-        const next = new Set(prev);
-        if (next.has(id)) next.delete(id);
-        else next.add(id);
-        try {
-          window.localStorage.setItem(storageKey, JSON.stringify([...next]));
-        } catch {
-          // ignore quota / private-mode errors
-        }
-        return next;
-      });
-    },
-    [storageKey],
-  );
-
-  return [set, toggle];
-}
+const TAX_MIGRATED_KEY = "crypto-tax-migrated-v1";
 
 /** Stable per-holding key, matching the format used elsewhere for excludes. */
 function holdingKey(r: HoldingRow): string {
   return `${r.walletId}|${r.chain}|${r.contract}`;
+}
+
+function readLegacy(key: string): string[] {
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (raw) {
+      const arr = JSON.parse(raw) as unknown;
+      if (Array.isArray(arr)) return arr.map(String);
+    }
+  } catch {
+    // ignore
+  }
+  return [];
+}
+
+/**
+ * Tax-exclusion sets backed by the `crypto_tax_excludes` table (so a shared
+ * accountant link reflects them). Seeded from the server, toggles write through
+ * to Supabase, and any pre-existing localStorage marks are migrated once.
+ */
+function useDbTaxExcludes(
+  userId: string,
+  initialWallets: string[],
+  initialHoldings: string[],
+) {
+  const [wallets, setWallets] = useState<Set<string>>(
+    () => new Set(initialWallets),
+  );
+  const [holdings, setHoldings] = useState<Set<string>>(
+    () => new Set(initialHoldings),
+  );
+  const wRef = useRef(wallets);
+  wRef.current = wallets;
+  const hRef = useRef(holdings);
+  hRef.current = holdings;
+
+  // One-time migration of legacy localStorage marks into the DB.
+  useEffect(() => {
+    if (window.localStorage.getItem(TAX_MIGRATED_KEY)) return;
+    const oldW = readLegacy(TAX_WALLETS_KEY);
+    const oldH = readLegacy(TAX_HOLDINGS_KEY);
+    const rows = [
+      ...oldW.map((key) => ({ user_id: userId, kind: "wallet", key })),
+      ...oldH.map((key) => ({ user_id: userId, kind: "holding", key })),
+    ];
+    (async () => {
+      if (rows.length > 0) {
+        await supabaseBrowser()
+          .from("crypto_tax_excludes")
+          .upsert(rows, { onConflict: "user_id,kind,key" });
+        setWallets((prev) => new Set([...prev, ...oldW]));
+        setHoldings((prev) => new Set([...prev, ...oldH]));
+      }
+      window.localStorage.setItem(TAX_MIGRATED_KEY, "1");
+      window.localStorage.removeItem(TAX_WALLETS_KEY);
+      window.localStorage.removeItem(TAX_HOLDINGS_KEY);
+    })();
+  }, [userId]);
+
+  // Side effects run in the handler (never inside a setState updater) to avoid
+  // cross-component setState-during-render.
+  const makeToggle = (
+    ref: React.MutableRefObject<Set<string>>,
+    setSet: React.Dispatch<React.SetStateAction<Set<string>>>,
+    kind: "wallet" | "holding",
+  ) =>
+    (key: string) => {
+      const has = ref.current.has(key);
+      const next = new Set(ref.current);
+      if (has) next.delete(key);
+      else next.add(key);
+      ref.current = next;
+      setSet(next);
+      const sb = supabaseBrowser();
+      if (has) {
+        void sb
+          .from("crypto_tax_excludes")
+          .delete()
+          .eq("user_id", userId)
+          .eq("kind", kind)
+          .eq("key", key);
+      } else {
+        void sb
+          .from("crypto_tax_excludes")
+          .upsert({ user_id: userId, kind, key }, { onConflict: "user_id,kind,key" });
+      }
+    };
+
+  const toggleWallet = useCallback(makeToggle(wRef, setWallets, "wallet"), [
+    userId,
+  ]);
+  const toggleHolding = useCallback(makeToggle(hRef, setHoldings, "holding"), [
+    userId,
+  ]);
+
+  return { wallets, holdings, toggleWallet, toggleHolding };
 }
 
 const CHAIN_TYPE_LABEL: Record<ChainType, string> = {
@@ -132,13 +187,23 @@ const CHAIN_TYPE_TO_CHAIN: Record<ChainType, ChainId> = {
   theta: "theta",
 };
 
-export function AllWalletsList({ wallets, btcPriceUsd }: Props) {
+export function AllWalletsList({
+  wallets,
+  btcPriceUsd,
+  userId,
+  initialTaxWallets,
+  initialTaxHoldings,
+  existingShareToken,
+}: Props) {
   const grandTotalUsd = wallets.reduce((s, w) => s + w.totalUsd, 0);
   const grandTotalBtc = btcPriceUsd ? grandTotalUsd / btcPriceUsd : 0;
 
-  const [taxExcludedWallets, toggleWalletTax] = usePersistentSet(TAX_WALLETS_KEY);
-  const [taxExcludedHoldings, toggleHoldingTax] =
-    usePersistentSet(TAX_HOLDINGS_KEY);
+  const {
+    wallets: taxExcludedWallets,
+    holdings: taxExcludedHoldings,
+    toggleWallet: toggleWalletTax,
+    toggleHolding: toggleHoldingTax,
+  } = useDbTaxExcludes(userId, initialTaxWallets, initialTaxHoldings);
 
   // Keep the original (value-sorted) order within each section.
   const includedWallets = wallets.filter(
@@ -207,6 +272,17 @@ export function AllWalletsList({ wallets, btcPriceUsd }: Props) {
               />
             )}
           </div>
+        </div>
+        {/* Share a read-only, tax-included view with an accountant. */}
+        <div className="relative mt-4 pt-4 border-t border-border flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs text-text-muted">
+            Share a read-only view (only TAX-enabled rows) with your accountant —
+            addresses, balances and exportable transactions.
+          </p>
+          <ShareAccountantButton
+            userId={userId}
+            existingToken={existingShareToken}
+          />
         </div>
       </header>
 
