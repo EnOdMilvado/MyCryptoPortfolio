@@ -61,6 +61,10 @@ interface Props {
   existingShareToken: string | null;
 }
 
+/** Default transactions date range — the full 2025 tax year. */
+export const DEFAULT_TX_FROM = "2025-01-01";
+export const DEFAULT_TX_TO = "2025-12-31";
+
 /** Legacy localStorage keys — read once to migrate old marks into the DB. */
 const TAX_WALLETS_KEY = "crypto-tax-excluded-wallets";
 const TAX_HOLDINGS_KEY = "crypto-tax-excluded-holdings";
@@ -667,9 +671,10 @@ function TransactionsPanel({
   const [error, setError] = useState<string | null>(null);
   const [txs, setTxs] = useState<Transaction[]>([]);
 
-  // Date filter: YYYY-MM-DD strings (HTML <input type="date">). Empty = open.
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
+  // Date filter: YYYY-MM-DD strings (HTML <input type="date">). Defaults to
+  // the full 2025 tax year; "Clear dates" empties them to show everything.
+  const [fromDate, setFromDate] = useState(DEFAULT_TX_FROM);
+  const [toDate, setToDate] = useState(DEFAULT_TX_TO);
   const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
 
   const load = useCallback(async () => {

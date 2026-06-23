@@ -107,6 +107,55 @@ const KIND_LABEL: Record<string, string> = {
   other: "Other",
 };
 
+/** Default tax-year window for transaction exports. */
+const TX_FROM = "2025-01-01";
+const TX_TO = "2025-12-31";
+
+function inTaxYear(t: Transaction): boolean {
+  if (!t.timestamp) return true; // keep undated rows rather than dropping them
+  const ts = new Date(t.timestamp).getTime();
+  return (
+    ts >= Date.parse(`${TX_FROM}T00:00:00Z`) &&
+    ts <= Date.parse(`${TX_TO}T23:59:59Z`)
+  );
+}
+
+function safeName(s: string): string {
+  return s.replace(/[^a-zA-Z0-9_-]+/g, "_") || "wallet";
+}
+
+/** Build a CSV client-side and trigger a download (UTF-8 BOM for Excel). */
+function downloadCsv<T>(
+  filename: string,
+  rows: T[],
+  columns: { header: string; value: (r: T) => string | number | null }[],
+): void {
+  const esc = (v: string) =>
+    /[",\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+  const lines = [columns.map((c) => esc(c.header)).join(",")];
+  for (const r of rows) {
+    lines.push(
+      columns
+        .map((c) => {
+          const v = c.value(r);
+          return v == null ? "" : esc(String(v));
+        })
+        .join(","),
+    );
+  }
+  const blob = new Blob(["﻿", lines.join("\r\n")], {
+    type: "text/csv;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename.endsWith(".csv") ? filename : `${filename}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 /* ------------------------------- main view ------------------------------ */
 
 export function ShareView({ token, data }: { token: string; data: ShareData }) {
@@ -220,53 +269,115 @@ function ShareWalletItem({
   token: string;
 }) {
   const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<"holdings" | "transactions">("holdings");
+  const [tab, setTab] = useState<"holdings" | "transactions">("transactions");
   const rows = useMemo(() => walletHoldingRows(wallet), [wallet]);
   const totalUsd = rows.reduce((s, r) => s + r.valueUsd, 0);
   const chainIcon = CHAIN_TYPE_TO_CHAIN[wallet.chainType] ?? "ethereum";
 
+  const [txs, setTxs] = useState<Transaction[]>([]);
+  const [txLoaded, setTxLoaded] = useState(false);
+  const [txLoading, setTxLoading] = useState(false);
+  const [txError, setTxError] = useState<string | null>(null);
+
+  const loadTx = useCallback(async (): Promise<Transaction[]> => {
+    setTxLoading(true);
+    setTxError(null);
+    try {
+      const res = await fetch("/api/share/transactions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token, walletId: wallet.id }),
+      });
+      const json = (await res.json()) as {
+        transactions?: Transaction[];
+        error?: string;
+      };
+      if (!res.ok) throw new Error(json.error ?? "Load failed");
+      const arr = json.transactions ?? [];
+      setTxs(arr);
+      setTxLoaded(true);
+      return arr;
+    } catch (e) {
+      setTxError(e instanceof Error ? e.message : "Load failed");
+      return [];
+    } finally {
+      setTxLoading(false);
+    }
+  }, [token, wallet.id]);
+
+  const txInYear = useMemo(() => txs.filter(inTaxYear), [txs]);
+
+  // One-click CSV: fetch on demand if not loaded yet, then download the
+  // 2025-filtered set. The accountant never has to open the wallet first.
+  async function downloadTx() {
+    const arr = txLoaded ? txs : await loadTx();
+    downloadCsv(
+      `${safeName(wallet.name)}-transactions-2025`,
+      arr.filter(inTaxYear),
+      TX_CSV_COLUMNS,
+    );
+  }
+
+  // Auto-load transactions the first time the wallet is opened on the tab.
+  useEffect(() => {
+    if (open && tab === "transactions" && !txLoaded && !txLoading) {
+      void loadTx();
+    }
+  }, [open, tab, txLoaded, txLoading, loadTx]);
+
   return (
     <li className="card-tight overflow-hidden">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center gap-3 text-left"
-        aria-expanded={open}
-      >
-        <ChainPill chain={chainIcon} />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="font-semibold text-text truncate">
-              {wallet.name}
-            </span>
-            <span className="text-[10px] text-text-muted/80 shrink-0">
-              · {wallet.portfolioName}
-            </span>
-          </div>
-          <div className="text-xs text-text-muted">
-            {wallet.holdings.length} holdings
-          </div>
-        </div>
-        <UsdValue
-          value={totalUsd}
-          priceUsd={1}
-          className="text-base sm:text-lg font-extrabold tabular text-text shrink-0"
-        />
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className={`shrink-0 text-text-muted transition-transform ${open ? "rotate-180" : ""}`}
-          aria-hidden
+      <div className="flex items-center gap-2 sm:gap-3">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="flex flex-1 items-center gap-3 text-left min-w-0"
+          aria-expanded={open}
         >
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
-      </button>
+          <ChainPill chain={chainIcon} />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="font-semibold text-text truncate">
+                {wallet.name}
+              </span>
+              <span className="text-[10px] text-text-muted/80 shrink-0">
+                · {wallet.portfolioName}
+              </span>
+            </div>
+            <div className="text-xs text-text-muted">
+              {wallet.holdings.length} holdings
+            </div>
+          </div>
+          <UsdValue
+            value={totalUsd}
+            priceUsd={1}
+            className="text-base sm:text-lg font-extrabold tabular text-text shrink-0"
+          />
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={`shrink-0 text-text-muted transition-transform ${open ? "rotate-180" : ""}`}
+            aria-hidden
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          onClick={downloadTx}
+          disabled={txLoading}
+          className="btn-ghost text-xs shrink-0 whitespace-nowrap"
+          title="Download 2025 transactions as CSV"
+        >
+          {txLoading ? "…" : "⬇ CSV 2025"}
+        </button>
+      </div>
 
       {wallet.address && (
         <div className="mt-2 flex items-start gap-2">
@@ -304,11 +415,45 @@ function ShareWalletItem({
               <HoldingsTable rows={rows} groupColumn="network" />
             )
           ) : (
-            <ShareTransactionsPanel
-              token={token}
-              walletId={wallet.id}
-              walletName={wallet.name}
-            />
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-text-muted">
+                  {txLoading
+                    ? "loading…"
+                    : `${txInYear.length} transactions in 2025`}
+                </span>
+                <div className="flex items-center gap-2">
+                  <DownloadCsvButton
+                    filename={`${safeName(wallet.name)}-transactions-2025`}
+                    rows={txInYear}
+                    columns={TX_CSV_COLUMNS}
+                    disabled={txInYear.length === 0}
+                    label="CSV 2025"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void loadTx()}
+                    disabled={txLoading}
+                    className="btn-ghost text-xs"
+                  >
+                    {txLoading ? "…" : "Reload"}
+                  </button>
+                </div>
+              </div>
+              {txError ? (
+                <div className="text-sm text-danger py-3">{txError}</div>
+              ) : txLoading && txs.length === 0 ? (
+                <div className="text-sm text-text-muted py-6 text-center">
+                  Loading transactions…
+                </div>
+              ) : txInYear.length === 0 ? (
+                <div className="text-sm text-text-muted py-6 text-center">
+                  No 2025 transactions found.
+                </div>
+              ) : (
+                <TransactionsTable transactions={txInYear} />
+              )}
+            </div>
           )}
         </div>
       )}
@@ -357,91 +502,6 @@ const TX_CSV_COLUMNS: {
   { header: "Hash", value: (t) => t.hash },
   { header: "Explorer URL", value: (t) => t.explorerUrl },
 ];
-
-function ShareTransactionsPanel({
-  token,
-  walletId,
-  walletName,
-}: {
-  token: string;
-  walletId: string;
-  walletName: string;
-}) {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [txs, setTxs] = useState<Transaction[]>([]);
-  const [loaded, setLoaded] = useState(false);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/share/transactions", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ token, walletId }),
-      });
-      const json = (await res.json()) as {
-        transactions?: Transaction[];
-        error?: string;
-      };
-      if (!res.ok) throw new Error(json.error ?? "Load failed");
-      setTxs(json.transactions ?? []);
-      setLoaded(true);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Load failed");
-    } finally {
-      setLoading(false);
-    }
-  }, [token, walletId]);
-
-  useEffect(() => {
-    if (!loaded) load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const csvName = `${walletName.replace(/[^a-zA-Z0-9_-]+/g, "_") || "wallet"}-transactions`;
-
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-xs text-text-muted">
-          {loading ? "loading…" : `${txs.length} transactions`}
-        </span>
-        <div className="flex items-center gap-2">
-          <DownloadCsvButton
-            filename={csvName}
-            rows={txs}
-            columns={TX_CSV_COLUMNS}
-            disabled={txs.length === 0}
-            label="CSV"
-          />
-          <button
-            type="button"
-            onClick={load}
-            disabled={loading}
-            className="btn-ghost text-xs"
-          >
-            {loading ? "…" : "Reload"}
-          </button>
-        </div>
-      </div>
-      {error ? (
-        <div className="text-sm text-danger py-3">{error}</div>
-      ) : loading && txs.length === 0 ? (
-        <div className="text-sm text-text-muted py-6 text-center">
-          Loading transactions…
-        </div>
-      ) : txs.length === 0 ? (
-        <div className="text-sm text-text-muted py-6 text-center">
-          No transactions found.
-        </div>
-      ) : (
-        <TransactionsTable transactions={txs} />
-      )}
-    </div>
-  );
-}
 
 /* ---------------------------- exchange item ---------------------------- */
 
