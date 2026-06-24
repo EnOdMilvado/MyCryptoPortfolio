@@ -230,12 +230,21 @@ export function AggregatedHoldingsTable({
     () => aggregatedAll.filter((r) => !r.hasPrice || r.totalUsd < 1).length,
     [aggregatedAll],
   );
+  // Keep an asset visible (even at $0 held) when it had P&L activity in the
+  // period — i.e. positions that were fully sold still appear in the report.
+  const hasPnlActivity = (key: string): boolean => {
+    const c = pnlByAsset?.get(key);
+    return !!c && (c.buys > 0 || c.sells > 0 || c.net !== 0);
+  };
   const aggregated = useMemo(
     () =>
       effShowDust
         ? aggregatedAll
-        : aggregatedAll.filter((r) => r.hasPrice && r.totalUsd >= 1),
-    [aggregatedAll, effShowDust],
+        : aggregatedAll.filter(
+            (r) => (r.hasPrice && r.totalUsd >= 1) || hasPnlActivity(r.key),
+          ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [aggregatedAll, effShowDust, pnlByAsset],
   );
 
   // Grand total across the (visible) included rows — used for the % column.

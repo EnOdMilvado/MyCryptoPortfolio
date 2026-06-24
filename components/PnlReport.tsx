@@ -12,7 +12,7 @@ import {
 import { computePnl, type PnlEvent } from "@/lib/pnl/engine";
 import type { HoldingRow } from "./HoldingsTable";
 import type { Transaction } from "@/lib/chains/transactions/types";
-import type { ChainType } from "@/lib/chains/types";
+import type { ChainId, ChainType } from "@/lib/chains/types";
 
 export interface PnlWallet {
   id: string;
@@ -144,6 +144,34 @@ export function PnlReport({
     }
     return m;
   }, [pnl]);
+
+  // Inject zero-balance placeholder rows for assets that had trades in the
+  // period but are no longer held (fully sold) — so they still appear.
+  const tableRows = useMemo(() => {
+    const held = new Set(
+      rows.map((r) => (r.symbol ?? "").trim().toUpperCase()).filter(Boolean),
+    );
+    const extra: HoldingRow[] = [];
+    for (const a of pnl.assets) {
+      if (held.has(a.asset)) continue;
+      extra.push({
+        walletId: `closed:${a.asset}`,
+        walletName: "Closed position (sold)",
+        walletAddress: "",
+        portfolioId: undefined,
+        portfolioName: "—",
+        chain: "exchange" as ChainId,
+        contract: `closed:${a.asset}`,
+        symbol: a.asset,
+        name: a.asset,
+        amount: 0,
+        priceUsd: null,
+        valueUsd: 0,
+        priceChange24h: null,
+      });
+    }
+    return extra.length > 0 ? [...rows, ...extra] : rows;
+  }, [rows, pnl]);
 
   const ownAddresses = useMemo(
     () => new Set(wallets.map((w) => w.address.toLowerCase())),
@@ -385,9 +413,9 @@ export function PnlReport({
       </section>
 
       {/* The exact "All holdings summary" table, with P&L columns + drill-down */}
-      <AllHoldingsProvider rows={rows} storageKey="pnl-page" btcPriceUsd={btcPriceUsd}>
+      <AllHoldingsProvider rows={tableRows} storageKey="pnl-page" btcPriceUsd={btcPriceUsd}>
         <AggregatedHoldingsTable
-          rows={rows}
+          rows={tableRows}
           btcPriceUsd={btcPriceUsd}
           pnlByAsset={pnlByAsset}
         />
