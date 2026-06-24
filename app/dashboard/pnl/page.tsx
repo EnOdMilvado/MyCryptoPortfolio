@@ -1,24 +1,33 @@
 import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase/server";
 import { NavBar } from "@/components/NavBar";
-import {
-  PnlReport,
-  type PnlWallet,
-  type CurrentHolding,
-} from "@/components/PnlReport";
+import { PnlReport, type PnlWallet } from "@/components/PnlReport";
 import {
   exchangeTradesToEvents,
   type ExchangeTradeRow,
 } from "@/lib/pnl/exchange";
 import type { PnlEvent } from "@/lib/pnl/engine";
-import type { ChainType } from "@/lib/chains/types";
+import type { HoldingRow } from "@/components/HoldingsTable";
+import type { ChainId, ChainType } from "@/lib/chains/types";
 
 export const dynamic = "force-dynamic";
 
+interface RawHolding {
+  chain: string;
+  contract: string;
+  symbol: string | null;
+  name: string | null;
+  amount: number | string;
+  price_usd: number | string | null;
+  value_usd: number | string | null;
+  price_change_24h: number | string | null;
+}
+
 /**
- * Tax P&L report page. Realized profit/loss per token over a configurable date
- * range, from TAX-marked wallets and exchanges only. Exchange trades are exact;
- * on-chain activity is priced with estimated historical prices client-side.
+ * חישוב רווח והפסד — the "All holdings summary" table (with the per-token
+ * wallet drill-down) plus Buys / Sells / realized P&L columns scoped to a
+ * chosen date range. TAX-marked wallets and exchanges only. Exchange trades
+ * are exact; on-chain is estimated client-side.
  */
 export default async function PnlPage() {
   const supabase = await supabaseServer();
@@ -43,7 +52,73 @@ export default async function PnlPage() {
       .map((r: { key: string }) => r.key),
   );
 
-  // TAX-included exchanges + their trades → exact P&L events.
+  // Latest BTC price (for the table's BTC column).
+  let btcPriceUsd: number | null = null;
+  const { data: btcRow } = await supabase
+    .from("crypto_holdings_cache")
+    .select("price_usd")
+    .eq("chain", "bitcoin")
+    .not("price_usd", "is", null)
+    .order("fetched_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (btcRow?.price_usd) btcPriceUsd = Number(btcRow.price_usd);
+
+  const rows: HoldingRow[] = [];
+
+  // TAX-included wallets → full holding rows (with portfolio context for the
+  // drill-down) + the wallet list the client uses for on-chain P&L.
+  const { data: rawPortfolios } = await supabase
+    .from("crypto_portfolios")
+    .select(
+      "id, name, crypto_wallets ( id, name, address, chain_type, crypto_holdings_cache ( chain, contract, symbol, name, amount, price_usd, value_usd, price_change_24h ) )",
+    );
+  const wallets: PnlWallet[] = [];
+  for (const p of (rawPortfolios as
+    | {
+        id: string;
+        name: string;
+        crypto_wallets:
+          | {
+              id: string;
+              name: string;
+              address: string;
+              chain_type: ChainType;
+              crypto_holdings_cache: RawHolding[] | null;
+            }[]
+          | null;
+      }[]
+    | null) ?? []) {
+    for (const w of p.crypto_wallets ?? []) {
+      if (excludedWalletKeys.has(w.id)) continue;
+      wallets.push({
+        id: w.id,
+        name: w.name,
+        address: w.address,
+        chainType: w.chain_type,
+      });
+      for (const h of w.crypto_holdings_cache ?? []) {
+        rows.push({
+          walletId: w.id,
+          walletName: w.name,
+          walletAddress: w.address,
+          portfolioId: p.id,
+          portfolioName: p.name,
+          chain: h.chain as ChainId,
+          contract: h.contract,
+          symbol: h.symbol,
+          name: h.name,
+          amount: Number(h.amount),
+          priceUsd: h.price_usd == null ? null : Number(h.price_usd),
+          valueUsd: h.value_usd == null ? 0 : Number(h.value_usd),
+          priceChange24h:
+            h.price_change_24h == null ? null : Number(h.price_change_24h),
+        });
+      }
+    }
+  }
+
+  // TAX-included exchanges: trades → exact events, balances → holding rows.
   const { data: exRows } = await supabase
     .from("crypto_exchanges")
     .select("id, provider, label");
@@ -59,10 +134,7 @@ export default async function PnlPage() {
       .select(
         "exchange_id, base_asset, quote_asset, side, price, qty, quote_qty, fee, fee_asset, executed_at",
       )
-      .in(
-        "exchange_id",
-        exchanges.map((e) => e.id),
-      );
+      .in("exchange_id", exchanges.map((e) => e.id));
     const byExchange = new Map<string, ExchangeTradeRow[]>();
     for (const t of (trades as (ExchangeTradeRow & { exchange_id: string })[] | null) ??
       []) {
@@ -70,68 +142,48 @@ export default async function PnlPage() {
       if (arr) arr.push(t);
       else byExchange.set(t.exchange_id, [t]);
     }
-    for (const [exId, rows] of byExchange) {
+    for (const [exId, tr] of byExchange) {
       exchangeEvents.push(
-        ...exchangeTradesToEvents(rows, exLabel.get(exId) ?? "Exchange"),
+        ...exchangeTradesToEvents(tr, exLabel.get(exId) ?? "Exchange"),
       );
     }
-  }
 
-  // TAX-included wallets → the client fetches their on-chain transactions.
-  const { data: rawPortfolios } = await supabase
-    .from("crypto_portfolios")
-    .select("id, crypto_wallets ( id, name, address, chain_type )");
-  const wallets: PnlWallet[] = [];
-  for (const p of (rawPortfolios as
-    | {
-        crypto_wallets:
-          | { id: string; name: string; address: string; chain_type: ChainType }[]
-          | null;
-      }[]
-    | null) ?? []) {
-    for (const w of p.crypto_wallets ?? []) {
-      if (excludedWalletKeys.has(w.id)) continue;
-      wallets.push({
-        id: w.id,
-        name: w.name,
-        address: w.address,
-        chainType: w.chain_type,
+    const { data: bc } = await supabase
+      .from("crypto_exchange_balances_cache")
+      .select("exchange_id, asset, amount, price_usd, value_usd, price_change_24h")
+      .in("exchange_id", exchanges.map((e) => e.id));
+    for (const b of (bc as
+      | {
+          exchange_id: string;
+          asset: string;
+          amount: number | string | null;
+          price_usd: number | string | null;
+          value_usd: number | string | null;
+          price_change_24h: number | string | null;
+        }[]
+      | null) ?? []) {
+      const amount = Number(b.amount ?? 0);
+      if (!(amount > 0)) continue;
+      const ex = exchanges.find((e) => e.id === b.exchange_id);
+      rows.push({
+        walletId: `exchange:${b.exchange_id}`,
+        walletName: ex?.label ?? "Exchange",
+        walletAddress: "",
+        portfolioId: undefined,
+        portfolioName: ex?.provider.toUpperCase() ?? "EXCHANGE",
+        chain: "exchange" as ChainId,
+        contract: `${b.exchange_id}:${b.asset.toUpperCase()}`,
+        symbol: b.asset,
+        name: b.asset,
+        amount,
+        priceUsd: b.price_usd == null ? null : Number(b.price_usd),
+        valueUsd: b.value_usd == null ? 0 : Number(b.value_usd),
+        priceChange24h:
+          b.price_change_24h == null ? null : Number(b.price_change_24h),
+        exchangeId: b.exchange_id,
       });
     }
   }
-
-  // Current holdings (TAX-marked wallets + exchanges) aggregated per asset, so
-  // the report can show a holdings table with live amount/value alongside P&L.
-  const holdingsMap = new Map<string, { amount: number; valueUsd: number }>();
-  const add = (sym: string | null, amount: number, valueUsd: number) => {
-    const a = (sym ?? "").trim().toUpperCase();
-    if (!a) return;
-    const cur = holdingsMap.get(a);
-    if (cur) {
-      cur.amount += amount;
-      cur.valueUsd += valueUsd;
-    } else holdingsMap.set(a, { amount, valueUsd });
-  };
-  const walletIds = wallets.map((w) => w.id);
-  if (walletIds.length > 0) {
-    const { data: hc } = await supabase
-      .from("crypto_holdings_cache")
-      .select("symbol, amount, value_usd")
-      .in("wallet_id", walletIds);
-    for (const h of (hc as { symbol: string | null; amount: number | string; value_usd: number | string | null }[] | null) ?? [])
-      add(h.symbol, Number(h.amount), Number(h.value_usd ?? 0));
-  }
-  if (exchanges.length > 0) {
-    const { data: bc } = await supabase
-      .from("crypto_exchange_balances_cache")
-      .select("asset, amount, value_usd")
-      .in("exchange_id", exchanges.map((e) => e.id));
-    for (const b of (bc as { asset: string; amount: number | string; value_usd: number | string | null }[] | null) ?? [])
-      add(b.asset, Number(b.amount), Number(b.value_usd ?? 0));
-  }
-  const currentHoldings: CurrentHolding[] = [...holdingsMap.entries()].map(
-    ([asset, v]) => ({ asset, amount: v.amount, valueUsd: v.valueUsd }),
-  );
 
   return (
     <>
@@ -145,10 +197,11 @@ export default async function PnlPage() {
       />
       <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
         <PnlReport
+          rows={rows}
           exchangeEvents={exchangeEvents}
           wallets={wallets}
-          currentHoldings={currentHoldings}
           exchangeIds={exchanges.map((e) => e.id)}
+          btcPriceUsd={btcPriceUsd}
         />
       </main>
     </>

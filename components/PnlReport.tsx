@@ -2,10 +2,15 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { DownloadCsvButton } from "./DownloadCsvButton";
 import { UsdValue } from "./MaskedValue";
-import { formatAmount, formatUsd } from "@/lib/format";
-import { computePnl, type PnlEvent, type AssetPnl } from "@/lib/pnl/engine";
+import { formatUsd } from "@/lib/format";
+import { AllHoldingsProvider } from "./AllHoldingsView";
+import {
+  AggregatedHoldingsTable,
+  type AssetPnlCell,
+} from "./AggregatedHoldingsTable";
+import { computePnl, type PnlEvent } from "@/lib/pnl/engine";
+import type { HoldingRow } from "./HoldingsTable";
 import type { Transaction } from "@/lib/chains/transactions/types";
 import type { ChainType } from "@/lib/chains/types";
 
@@ -14,11 +19,6 @@ export interface PnlWallet {
   name: string;
   address: string;
   chainType: ChainType;
-}
-export interface CurrentHolding {
-  asset: string;
-  amount: number;
-  valueUsd: number;
 }
 
 const DEFAULT_FROM = "2025-01-01";
@@ -77,7 +77,6 @@ async function mapWithConcurrency<T, R>(
   return out;
 }
 
-/** Month windows [startMs,endMs] covering [from,to], for chunked API backfill. */
 function monthWindows(fromIso: string, toIso: string): { startMs: number; endMs: number }[] {
   const out: { startMs: number; endMs: number }[] = [];
   const start = new Date(fromIso);
@@ -94,29 +93,18 @@ function monthWindows(fromIso: string, toIso: string): { startMs: number; endMs:
   return out;
 }
 
-interface Row {
-  asset: string;
-  amount: number;
-  valueUsd: number;
-  buysUsd: number;
-  sellsUsd: number;
-  profit: number;
-  loss: number;
-  net: number;
-  estimated: boolean;
-  missingCostBasis: boolean;
-}
-
 export function PnlReport({
+  rows,
   exchangeEvents,
   wallets,
-  currentHoldings,
   exchangeIds,
+  btcPriceUsd,
 }: {
+  rows: HoldingRow[];
   exchangeEvents: PnlEvent[];
   wallets: PnlWallet[];
-  currentHoldings: CurrentHolding[];
   exchangeIds: string[];
+  btcPriceUsd: number | null;
 }) {
   const router = useRouter();
   const [fromDate, setFromDate] = useState(DEFAULT_FROM);
@@ -128,7 +116,6 @@ export function PnlReport({
   const [progress, setProgress] = useState("");
   const [unpriced, setUnpriced] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
-
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState("");
 
@@ -144,45 +131,19 @@ export function PnlReport({
     [allEvents, fromIso, toIso],
   );
 
-  // Merge current holdings with per-asset P&L into one table.
-  const rows = useMemo<Row[]>(() => {
-    const byAsset = new Map<string, AssetPnl>();
-    for (const a of pnl.assets) byAsset.set(a.asset, a);
-    const holdingByAsset = new Map<string, CurrentHolding>();
-    for (const h of currentHoldings) holdingByAsset.set(h.asset, h);
-
-    const assets = new Set<string>([
-      ...currentHoldings.map((h) => h.asset),
-      ...pnl.assets.map((a) => a.asset),
-    ]);
-
-    const out: Row[] = [];
-    for (const asset of assets) {
-      if (STABLE_ASSETS.has(asset)) continue; // stables: no gain/loss
-      const a = byAsset.get(asset);
-      const h = holdingByAsset.get(asset);
-      out.push({
-        asset,
-        amount: h?.amount ?? 0,
-        valueUsd: h?.valueUsd ?? 0,
-        buysUsd: a?.buysUsd ?? 0,
-        sellsUsd: a?.sellsUsd ?? 0,
-        profit: a?.realizedProfit ?? 0,
-        loss: a?.realizedLoss ?? 0,
-        net: a?.realizedUsd ?? 0,
-        estimated: a?.estimated ?? false,
-        missingCostBasis: a?.missingCostBasis ?? false,
+  // Map per-asset P&L (date-range scoped) for the table's extra columns.
+  const pnlByAsset = useMemo(() => {
+    const m = new Map<string, AssetPnlCell>();
+    for (const a of pnl.assets) {
+      m.set(a.asset, {
+        buys: a.buysUsd,
+        sells: a.sellsUsd,
+        net: a.realizedUsd,
+        estimated: a.estimated,
       });
     }
-    // Sort: assets with realized activity first (by |net|), then by value.
-    out.sort((x, y) => {
-      const ax = Math.abs(x.net) + x.buysUsd + x.sellsUsd;
-      const ay = Math.abs(y.net) + y.buysUsd + y.sellsUsd;
-      if (ay !== ax) return ay - ax;
-      return y.valueUsd - x.valueUsd;
-    });
-    return out;
-  }, [pnl, currentHoldings]);
+    return m;
+  }, [pnl]);
 
   const ownAddresses = useMemo(
     () => new Set(wallets.map((w) => w.address.toLowerCase())),
@@ -315,8 +276,6 @@ export function PnlReport({
     }
   }
 
-  // Pull older exchange trades via the API, one month per call per exchange so
-  // each request stays inside the function time budget. Slow but complete.
   async function syncExchangeHistory() {
     if (exchangeIds.length === 0 || !fromIso || !toIso) return;
     setSyncing(true);
@@ -354,27 +313,15 @@ export function PnlReport({
     }
   }
 
-  const csvColumns = [
-    { header: "Asset", value: (r: Row) => r.asset },
-    { header: "Amount", value: (r: Row) => r.amount },
-    { header: "Value now (USD)", value: (r: Row) => r.valueUsd.toFixed(2) },
-    { header: "Buys (USD)", value: (r: Row) => r.buysUsd.toFixed(2) },
-    { header: "Sells (USD)", value: (r: Row) => r.sellsUsd.toFixed(2) },
-    { header: "Profit (USD)", value: (r: Row) => r.profit.toFixed(2) },
-    { header: "Loss (USD)", value: (r: Row) => r.loss.toFixed(2) },
-    { header: "Net P&L (USD)", value: (r: Row) => r.net.toFixed(2) },
-    { header: "Estimated", value: (r: Row) => (r.estimated ? "yes" : "no") },
-  ];
-
   return (
     <div className="space-y-6">
       <header className="card p-5 sm:p-6 space-y-4">
         <div>
-          <h1 className="text-2xl font-bold text-text">Profit &amp; Loss · holdings</h1>
+          <h1 className="text-2xl font-bold text-text">חישוב רווח והפסד</h1>
           <p className="text-sm text-text-muted mt-1">
-            Every token you hold (TAX-marked wallets &amp; exchanges) with realized
-            profit / loss for the selected period. Exchange trades are exact;
-            on-chain is estimated.
+            All holdings (TAX-marked) with buys, sells and realized P&amp;L for
+            the selected period. Click a row to see the wallets/exchanges behind
+            it. Exchange trades are exact; on-chain is estimated.
           </p>
         </div>
         <div className="flex flex-wrap items-end gap-3">
@@ -420,17 +367,10 @@ export function PnlReport({
                 {loading ? progress || "Loading…" : "+ Add on-chain (estimated)"}
               </button>
             )}
-            <DownloadCsvButton
-              filename={`pnl-${fromDate || "start"}_to_${toDate || "end"}`}
-              rows={rows}
-              columns={csvColumns}
-              disabled={rows.length === 0}
-              label="Export CSV"
-            />
           </div>
         </div>
         {error && (
-          <p className="text-sm text-danger bg-danger/10 rounded-lg px-2 py-1.5">
+          <p className="text-sm text-danger bg-danger/10 rounded-lg px-3 py-2">
             {error}
           </p>
         )}
@@ -444,113 +384,14 @@ export function PnlReport({
         <TotalCard label="Net P&L" value={pnl.totalRealizedUsd} colorBySign />
       </section>
 
-      {/* Holdings + P&L table */}
-      <section className="card p-0 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-auto text-xs sm:text-sm">
-            <thead className="bg-surface-2/80 text-text-muted">
-              <tr>
-                <th className="pl-2 pr-1 py-1.5 text-left text-xs font-semibold uppercase tracking-wide w-px">
-                  Asset
-                </th>
-                <th className="pl-1 pr-2 py-1.5 text-left text-xs font-semibold uppercase tracking-wide">
-                  Amount
-                </th>
-                <Th>Value</Th>
-                <Th>Buys</Th>
-                <Th>Sells</Th>
-                <Th>Profit</Th>
-                <Th>Loss</Th>
-                <Th>Net P&L</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={r.asset} className={i % 2 ? "bg-surface-2/30" : ""}>
-                  <td className="pl-2 pr-1 py-1.5 font-semibold text-text whitespace-nowrap w-px">
-                    {r.asset}
-                    {r.estimated && (
-                      <span className="pill ml-1" title="Includes estimated on-chain prices">
-                        est.
-                      </span>
-                    )}
-                    {r.missingCostBasis && (
-                      <span className="ml-1 text-amber-500" title="Sold more than the known acquisition history — cost basis incomplete">
-                        ⚠
-                      </span>
-                    )}
-                  </td>
-                  <td className="pl-1 pr-2 py-1.5 text-left tabular text-text-muted whitespace-nowrap">
-                    {r.amount > 0 ? formatAmount(r.amount) : "—"}
-                  </td>
-                  <td className="px-2 py-1.5 text-left tabular whitespace-nowrap">
-                    {r.valueUsd > 0 ? formatUsd(r.valueUsd) : "—"}
-                  </td>
-                  <td className="px-2 py-1.5 text-left tabular whitespace-nowrap">
-                    {r.buysUsd > 0 ? formatUsd(r.buysUsd) : "—"}
-                  </td>
-                  <td className="px-2 py-1.5 text-left tabular whitespace-nowrap">
-                    {r.sellsUsd > 0 ? formatUsd(r.sellsUsd) : "—"}
-                  </td>
-                  <td className="px-2 py-1.5 text-left tabular text-success whitespace-nowrap">
-                    {r.profit > 0 ? `+${formatUsd(r.profit)}` : "—"}
-                  </td>
-                  <td className="px-2 py-1.5 text-left tabular text-danger whitespace-nowrap">
-                    {r.loss < 0 ? formatUsd(r.loss) : "—"}
-                  </td>
-                  <td
-                    className={`px-2 py-1.5 text-left tabular font-semibold whitespace-nowrap ${
-                      r.net > 0 ? "text-success" : r.net < 0 ? "text-danger" : "text-text-muted"
-                    }`}
-                  >
-                    {r.net !== 0 ? `${r.net > 0 ? "+" : ""}${formatUsd(r.net)}` : "—"}
-                  </td>
-                </tr>
-              ))}
-              {rows.length === 0 && (
-                <tr>
-                  <td colSpan={8} className="px-3 py-8 text-center text-text-muted">
-                    No TAX-marked holdings or trades yet.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-            {rows.length > 0 && (
-              <tfoot className="border-t-2 border-border bg-surface-2/40 font-bold">
-                <tr>
-                  <td className="pl-2 pr-1 py-1.5 text-xs uppercase text-text-muted w-px">
-                    Total
-                  </td>
-                  <td />
-                  <td className="px-2 py-1.5 text-left tabular">
-                    {formatUsd(rows.reduce((s, r) => s + r.valueUsd, 0))}
-                  </td>
-                  <td className="px-2 py-1.5 text-left tabular">
-                    {formatUsd(pnl.totalBuysUsd)}
-                  </td>
-                  <td className="px-2 py-1.5 text-left tabular">
-                    {formatUsd(pnl.totalSellsUsd)}
-                  </td>
-                  <td className="px-2 py-1.5 text-left tabular text-success">
-                    +{formatUsd(pnl.totalProfit)}
-                  </td>
-                  <td className="px-2 py-1.5 text-left tabular text-danger">
-                    {formatUsd(pnl.totalLoss)}
-                  </td>
-                  <td
-                    className={`px-2 py-1.5 text-left tabular ${
-                      pnl.totalRealizedUsd >= 0 ? "text-success" : "text-danger"
-                    }`}
-                  >
-                    {pnl.totalRealizedUsd >= 0 ? "+" : ""}
-                    {formatUsd(pnl.totalRealizedUsd)}
-                  </td>
-                </tr>
-              </tfoot>
-            )}
-          </table>
-        </div>
-      </section>
+      {/* The exact "All holdings summary" table, with P&L columns + drill-down */}
+      <AllHoldingsProvider rows={rows} storageKey="pnl-page" btcPriceUsd={btcPriceUsd}>
+        <AggregatedHoldingsTable
+          rows={rows}
+          btcPriceUsd={btcPriceUsd}
+          pnlByAsset={pnlByAsset}
+        />
+      </AllHoldingsProvider>
 
       {unpriced.length > 0 && (
         <p className="text-xs text-text-muted">
@@ -561,26 +402,15 @@ export function PnlReport({
 
       <div className="card bg-surface-2/40 text-xs text-text-muted leading-relaxed">
         <p className="font-semibold text-text mb-1">Important</p>
-        Exchange trades use exact prices. On-chain rows are{" "}
-        <span className="pill">est.</span> — estimated historical prices,
-        external transfers treated as buys/sells (internal wallet-to-wallet moves
-        excluded), FIFO cost basis. Exchange APIs only return recent history by
-        default — use “Sync exchange history” to backfill older months (it’s slow
-        because the exchanges page trade data per symbol). This is a USD
-        preparation aid, not tax advice — verify with your accountant and convert
-        to ILS at the official rates.
+        Holdings columns show your current position. Buys / Sells / P&amp;L are
+        scoped to the selected dates. Exchange trades use exact prices; on-chain
+        P&amp;L is estimated (a <span className="font-mono">~</span> marks
+        estimated values), external transfers treated as buys/sells, FIFO cost
+        basis. Exchange APIs return only recent history by default — use “Sync
+        exchange history” to backfill older months (slow). USD aid, not tax
+        advice — verify with your accountant and convert to ILS.
       </div>
     </div>
-  );
-}
-
-function Th({ children, right }: { children: React.ReactNode; right?: boolean }) {
-  return (
-    <th
-      className={`px-2 py-1.5 text-xs font-semibold uppercase tracking-wide ${right ? "text-left" : "text-left"}`}
-    >
-      {children}
-    </th>
   );
 }
 

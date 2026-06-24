@@ -108,10 +108,18 @@ function aggregate(rows: HoldingRow[]): AggregatedRow[] {
 
 const EXCLUDE_KEY = "crypto-aggregated-excluded";
 
+export interface AssetPnlCell {
+  buys: number;
+  sells: number;
+  net: number;
+  estimated: boolean;
+}
+
 export function AggregatedHoldingsTable({
   rows,
   btcPriceUsd,
   onHide,
+  pnlByAsset,
 }: {
   rows: HoldingRow[];
   /** When provided, an extra BTC-value column is shown after USD. */
@@ -121,9 +129,14 @@ export function AggregatedHoldingsTable({
    *  (Rows shown here are always currently-visible, so the box reads
    *  unchecked; restore is done from the "Hidden holdings" panel.) */
   onHide?: (keys: string[]) => void;
+  /** When provided, three extra columns (Buys / Sells / P&L) are shown,
+   *  keyed by the aggregate key (uppercased symbol). Used by the tax P&L
+   *  page, where the values are scoped to a chosen date range. */
+  pnlByAsset?: Map<string, AssetPnlCell>;
 }) {
   const showBtc = btcPriceUsd != null && btcPriceUsd > 0;
   const hideable = !!onHide;
+  const pnl = !!pnlByAsset;
   const { focusedAsset, focusAsset } = useAllHoldings();
   const [sortKey, setSortKey] = useState<SortKey>("totalUsd");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -373,6 +386,9 @@ export function AggregatedHoldingsTable({
             <col className="hidden sm:table-column sm:w-[8%]" />
             <col className="hidden sm:table-column sm:w-[10%]" />
             <col className="w-[30%] sm:w-[12%]" />
+            {pnl && <col className="hidden sm:table-column sm:w-[10%]" />}
+            {pnl && <col className="hidden sm:table-column sm:w-[10%]" />}
+            {pnl && <col className="w-[24%] sm:w-[11%]" />}
             {showBtc && <col className="hidden sm:table-column sm:w-[10%]" />}
             <col className="hidden sm:table-column sm:w-[6%]" />
             <col className="hidden sm:table-column sm:w-[6%]" />
@@ -426,6 +442,19 @@ export function AggregatedHoldingsTable({
                   onClick={() => toggleSort("totalUsd")}
                 />
               </th>
+              {pnl && (
+                <>
+                  <th className="hidden sm:table-cell px-2 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-text-muted">
+                    Buys
+                  </th>
+                  <th className="hidden sm:table-cell px-2 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-text-muted">
+                    Sells
+                  </th>
+                  <th className="px-2 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-text-muted">
+                    P&L
+                  </th>
+                </>
+              )}
               {showBtc && (
                 <th className="hidden sm:table-cell px-2 py-2.5 text-left">
                   <SortHeader
@@ -564,6 +593,34 @@ export function AggregatedHoldingsTable({
                         className="tabular font-semibold"
                       />
                     </td>
+                    {/* Buys / Sells / P&L (date-range scoped) */}
+                    {pnl &&
+                      (() => {
+                        const c = pnlByAsset!.get(r.key);
+                        return (
+                          <>
+                            <td className="hidden sm:table-cell px-2 py-2.5 align-middle text-left tabular text-sm whitespace-nowrap text-text-muted">
+                              {c && c.buys > 0 ? formatUsd(c.buys) : "—"}
+                            </td>
+                            <td className="hidden sm:table-cell px-2 py-2.5 align-middle text-left tabular text-sm whitespace-nowrap text-text-muted">
+                              {c && c.sells > 0 ? formatUsd(c.sells) : "—"}
+                            </td>
+                            <td
+                              className={`px-2 py-2.5 align-middle text-left tabular text-sm font-semibold whitespace-nowrap ${
+                                !c || c.net === 0
+                                  ? "text-text-muted"
+                                  : c.net > 0
+                                    ? "text-success"
+                                    : "text-danger"
+                              }`}
+                            >
+                              {c && c.net !== 0
+                                ? `${c.net > 0 ? "+" : ""}${formatUsd(c.net)}${c.estimated ? " ~" : ""}`
+                                : "—"}
+                            </td>
+                          </>
+                        );
+                      })()}
                     {/* BTC */}
                     {showBtc && (
                       <td className="hidden sm:table-cell px-2 py-2.5 align-middle text-left whitespace-nowrap">
@@ -610,7 +667,7 @@ export function AggregatedHoldingsTable({
                   </tr>
                   {isExpanded && (
                     <tr key={`${r.key}-expand`} className="bg-surface-2/40">
-                      <td colSpan={(showBtc ? 11 : 10) + (hideable ? 1 : 0)} className="px-4 py-3">
+                      <td colSpan={(showBtc ? 11 : 10) + (hideable ? 1 : 0) + (pnl ? 3 : 0)} className="px-4 py-3">
                         <div className="text-xs text-text-muted mb-2">
                           {r.contributors.length}{" "}
                           {r.contributors.length === 1 ? "holding" : "holdings"} on{" "}
@@ -686,7 +743,7 @@ export function AggregatedHoldingsTable({
             {sorted.length === 0 && (
               <tr>
                 <td
-                  colSpan={(showBtc ? 11 : 10) + (hideable ? 1 : 0)}
+                  colSpan={(showBtc ? 11 : 10) + (hideable ? 1 : 0) + (pnl ? 3 : 0)}
                   className="px-3 py-6 text-center text-text-muted"
                 >
                   No assets match the current filter
@@ -708,6 +765,38 @@ export function AggregatedHoldingsTable({
                 <td className="px-2 py-2.5 text-left whitespace-nowrap tabular">
                   <UsdValue value={grandTotalUsd} priceUsd={1} />
                 </td>
+                {pnl &&
+                  (() => {
+                    let b = 0,
+                      s = 0,
+                      n = 0;
+                    for (const r of sorted) {
+                      if (excluded.has(r.key)) continue;
+                      const c = pnlByAsset!.get(r.key);
+                      if (c) {
+                        b += c.buys;
+                        s += c.sells;
+                        n += c.net;
+                      }
+                    }
+                    return (
+                      <>
+                        <td className="hidden sm:table-cell px-2 py-2.5 text-left whitespace-nowrap tabular text-text-muted">
+                          {b > 0 ? formatUsd(b) : "—"}
+                        </td>
+                        <td className="hidden sm:table-cell px-2 py-2.5 text-left whitespace-nowrap tabular text-text-muted">
+                          {s > 0 ? formatUsd(s) : "—"}
+                        </td>
+                        <td
+                          className={`px-2 py-2.5 text-left whitespace-nowrap tabular ${
+                            n > 0 ? "text-success" : n < 0 ? "text-danger" : "text-text-muted"
+                          }`}
+                        >
+                          {n !== 0 ? `${n > 0 ? "+" : ""}${formatUsd(n)}` : "—"}
+                        </td>
+                      </>
+                    );
+                  })()}
                 {showBtc && (
                   <td className="hidden sm:table-cell px-2 py-2.5 text-left whitespace-nowrap tabular text-text-muted">
                     {btcPriceUsd && btcPriceUsd > 0

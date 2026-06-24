@@ -106,7 +106,7 @@ export function ProfileMenu({ user }: { user: ProfileMenuUser }) {
             onClick={() => setOpen(false)}
             className="block px-3 py-2 rounded-xl text-sm hover:bg-surface-2 transition"
           >
-            📊 Profit &amp; Loss
+            📊 חישוב רווח והפסד
           </Link>
           <Link
             href="/dashboard/import-trades"
