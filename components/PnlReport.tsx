@@ -430,7 +430,7 @@ export function PnlReport({
           </div>
         </div>
         {error && (
-          <p className="text-sm text-danger bg-danger/10 rounded-lg px-3 py-2">
+          <p className="text-sm text-danger bg-danger/10 rounded-lg px-2 py-1.5">
             {error}
           </p>
         )}
@@ -447,23 +447,23 @@ export function PnlReport({
       {/* Holdings + P&L table */}
       <section className="card p-0 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-auto text-xs sm:text-sm">
             <thead className="bg-surface-2/80 text-text-muted">
               <tr>
                 <Th>Asset</Th>
-                <Th right>Amount</Th>
-                <Th right>Value now</Th>
-                <Th right>Buys</Th>
-                <Th right>Sells</Th>
-                <Th right>Profit</Th>
-                <Th right>Loss</Th>
-                <Th right>Net P&L</Th>
+                <Th>Amount</Th>
+                <Th>Value</Th>
+                <Th>Buys</Th>
+                <Th>Sells</Th>
+                <Th>Profit</Th>
+                <Th>Loss</Th>
+                <Th>Net P&L</Th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r, i) => (
                 <tr key={r.asset} className={i % 2 ? "bg-surface-2/30" : ""}>
-                  <td className="px-3 py-2 font-semibold text-text whitespace-nowrap">
+                  <td className="px-2 py-1.5 font-semibold text-text whitespace-nowrap">
                     {r.asset}
                     {r.estimated && (
                       <span className="pill ml-1" title="Includes estimated on-chain prices">
@@ -476,26 +476,26 @@ export function PnlReport({
                       </span>
                     )}
                   </td>
-                  <td className="px-3 py-2 text-right tabular text-text-muted whitespace-nowrap">
+                  <td className="px-2 py-1.5 text-left tabular text-text-muted whitespace-nowrap">
                     {r.amount > 0 ? formatAmount(r.amount) : "—"}
                   </td>
-                  <td className="px-3 py-2 text-right tabular whitespace-nowrap">
+                  <td className="px-2 py-1.5 text-left tabular whitespace-nowrap">
                     {r.valueUsd > 0 ? formatUsd(r.valueUsd) : "—"}
                   </td>
-                  <td className="px-3 py-2 text-right tabular whitespace-nowrap">
+                  <td className="px-2 py-1.5 text-left tabular whitespace-nowrap">
                     {r.buysUsd > 0 ? formatUsd(r.buysUsd) : "—"}
                   </td>
-                  <td className="px-3 py-2 text-right tabular whitespace-nowrap">
+                  <td className="px-2 py-1.5 text-left tabular whitespace-nowrap">
                     {r.sellsUsd > 0 ? formatUsd(r.sellsUsd) : "—"}
                   </td>
-                  <td className="px-3 py-2 text-right tabular text-success whitespace-nowrap">
+                  <td className="px-2 py-1.5 text-left tabular text-success whitespace-nowrap">
                     {r.profit > 0 ? `+${formatUsd(r.profit)}` : "—"}
                   </td>
-                  <td className="px-3 py-2 text-right tabular text-danger whitespace-nowrap">
+                  <td className="px-2 py-1.5 text-left tabular text-danger whitespace-nowrap">
                     {r.loss < 0 ? formatUsd(r.loss) : "—"}
                   </td>
                   <td
-                    className={`px-3 py-2 text-right tabular font-semibold whitespace-nowrap ${
+                    className={`px-2 py-1.5 text-left tabular font-semibold whitespace-nowrap ${
                       r.net > 0 ? "text-success" : r.net < 0 ? "text-danger" : "text-text-muted"
                     }`}
                   >
@@ -514,25 +514,25 @@ export function PnlReport({
             {rows.length > 0 && (
               <tfoot className="border-t-2 border-border bg-surface-2/40 font-bold">
                 <tr>
-                  <td className="px-3 py-2 text-xs uppercase text-text-muted">Total</td>
+                  <td className="px-2 py-1.5 text-xs uppercase text-text-muted">Total</td>
                   <td />
-                  <td className="px-3 py-2 text-right tabular">
+                  <td className="px-2 py-1.5 text-left tabular">
                     {formatUsd(rows.reduce((s, r) => s + r.valueUsd, 0))}
                   </td>
-                  <td className="px-3 py-2 text-right tabular">
+                  <td className="px-2 py-1.5 text-left tabular">
                     {formatUsd(pnl.totalBuysUsd)}
                   </td>
-                  <td className="px-3 py-2 text-right tabular">
+                  <td className="px-2 py-1.5 text-left tabular">
                     {formatUsd(pnl.totalSellsUsd)}
                   </td>
-                  <td className="px-3 py-2 text-right tabular text-success">
+                  <td className="px-2 py-1.5 text-left tabular text-success">
                     +{formatUsd(pnl.totalProfit)}
                   </td>
-                  <td className="px-3 py-2 text-right tabular text-danger">
+                  <td className="px-2 py-1.5 text-left tabular text-danger">
                     {formatUsd(pnl.totalLoss)}
                   </td>
                   <td
-                    className={`px-3 py-2 text-right tabular ${
+                    className={`px-2 py-1.5 text-left tabular ${
                       pnl.totalRealizedUsd >= 0 ? "text-success" : "text-danger"
                     }`}
                   >
@@ -571,7 +571,7 @@ export function PnlReport({
 function Th({ children, right }: { children: React.ReactNode; right?: boolean }) {
   return (
     <th
-      className={`px-3 py-2 text-xs font-semibold uppercase tracking-wide ${right ? "text-right" : "text-left"}`}
+      className={`px-2 py-1.5 text-xs font-semibold uppercase tracking-wide ${right ? "text-left" : "text-left"}`}
     >
       {children}
     </th>
