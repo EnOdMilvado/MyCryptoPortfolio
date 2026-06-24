@@ -450,8 +450,12 @@ export function PnlReport({
           <table className="w-auto text-xs sm:text-sm">
             <thead className="bg-surface-2/80 text-text-muted">
               <tr>
-                <Th>Asset</Th>
-                <Th>Amount</Th>
+                <th className="pl-2 pr-1 py-1.5 text-left text-xs font-semibold uppercase tracking-wide w-px">
+                  Asset
+                </th>
+                <th className="pl-1 pr-2 py-1.5 text-left text-xs font-semibold uppercase tracking-wide">
+                  Amount
+                </th>
                 <Th>Value</Th>
                 <Th>Buys</Th>
                 <Th>Sells</Th>
@@ -463,7 +467,7 @@ export function PnlReport({
             <tbody>
               {rows.map((r, i) => (
                 <tr key={r.asset} className={i % 2 ? "bg-surface-2/30" : ""}>
-                  <td className="px-2 py-1.5 font-semibold text-text whitespace-nowrap">
+                  <td className="pl-2 pr-1 py-1.5 font-semibold text-text whitespace-nowrap w-px">
                     {r.asset}
                     {r.estimated && (
                       <span className="pill ml-1" title="Includes estimated on-chain prices">
@@ -476,7 +480,7 @@ export function PnlReport({
                       </span>
                     )}
                   </td>
-                  <td className="px-2 py-1.5 text-left tabular text-text-muted whitespace-nowrap">
+                  <td className="pl-1 pr-2 py-1.5 text-left tabular text-text-muted whitespace-nowrap">
                     {r.amount > 0 ? formatAmount(r.amount) : "—"}
                   </td>
                   <td className="px-2 py-1.5 text-left tabular whitespace-nowrap">
@@ -514,7 +518,9 @@ export function PnlReport({
             {rows.length > 0 && (
               <tfoot className="border-t-2 border-border bg-surface-2/40 font-bold">
                 <tr>
-                  <td className="px-2 py-1.5 text-xs uppercase text-text-muted">Total</td>
+                  <td className="pl-2 pr-1 py-1.5 text-xs uppercase text-text-muted w-px">
+                    Total
+                  </td>
                   <td />
                   <td className="px-2 py-1.5 text-left tabular">
                     {formatUsd(rows.reduce((s, r) => s + r.valueUsd, 0))}
