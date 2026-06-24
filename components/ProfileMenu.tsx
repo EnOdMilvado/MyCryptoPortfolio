@@ -109,6 +109,13 @@ export function ProfileMenu({ user }: { user: ProfileMenuUser }) {
             📊 Profit &amp; Loss
           </Link>
           <Link
+            href="/dashboard/import-trades"
+            onClick={() => setOpen(false)}
+            className="block px-3 py-2 rounded-xl text-sm hover:bg-surface-2 transition"
+          >
+            📥 Import trades (CSV)
+          </Link>
+          <Link
             href="/dashboard/nfts"
             onClick={() => setOpen(false)}
             className="block px-3 py-2 rounded-xl text-sm hover:bg-surface-2 transition"

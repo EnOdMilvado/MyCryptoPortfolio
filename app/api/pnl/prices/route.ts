@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
 import { COINGECKO_PLATFORM, type ChainId, type EvmChain } from "@/lib/chains/types";
+import {
+  alchemyHistoryBySymbol,
+  alchemyHistoryByAddress,
+} from "@/lib/pnl/alchemy_history";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -43,6 +47,8 @@ interface TokenReq {
   network: ChainId;
   /** null or "native" for the chain's native coin. */
   contract: string | null;
+  /** Token symbol — used for native-coin lookups by symbol. */
+  symbol?: string | null;
 }
 
 async function cgFetch<T>(url: string): Promise<T | null> {
@@ -108,28 +114,46 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "from/to required" }, { status: 400 });
   }
 
-  // Cap to keep us inside the function budget + CoinGecko free-tier limits.
-  const CAP = 40;
+  // Cap to keep us inside the function budget.
+  const CAP = 60;
   const limited = tokens.slice(0, CAP);
   const overflow = tokens.slice(CAP).map((t) => t.key);
+
+  const startIso = new Date(from * 1000).toISOString();
+  const endIso = new Date(to * 1000).toISOString();
 
   const prices: Record<string, [number, number][]> = {};
   const unpriced: string[] = [...overflow];
 
   for (const token of limited) {
-    const url = rangeUrl(token, from, to);
-    if (!url) {
-      unpriced.push(token.key);
-      continue;
+    const isNative =
+      !token.contract || token.contract === "native" || token.contract === "";
+
+    // 1) Alchemy historical first (reaches years back, contracts supported).
+    let series: [number, number][] = [];
+    if (isNative && token.symbol) {
+      series = await alchemyHistoryBySymbol(token.symbol, startIso, endIso);
+    } else if (!isNative && token.contract) {
+      series = await alchemyHistoryByAddress(
+        token.network,
+        token.contract,
+        startIso,
+        endIso,
+      );
     }
-    const json = await cgFetch<{ prices?: [number, number][] }>(url);
-    if (json?.prices && json.prices.length > 0) {
-      prices[token.key] = json.prices;
-    } else {
-      unpriced.push(token.key);
+
+    // 2) Fall back to CoinGecko (native ids / last 365 days only).
+    if (series.length === 0) {
+      const url = rangeUrl(token, from, to);
+      if (url) {
+        const json = await cgFetch<{ prices?: [number, number][] }>(url);
+        if (json?.prices && json.prices.length > 0) series = json.prices;
+        await new Promise((r) => setTimeout(r, 200));
+      }
     }
-    // Gentle pacing for the free tier.
-    await new Promise((r) => setTimeout(r, 250));
+
+    if (series.length > 0) prices[token.key] = series;
+    else unpriced.push(token.key);
   }
 
   return NextResponse.json({ prices, unpriced });

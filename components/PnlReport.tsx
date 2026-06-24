@@ -143,7 +143,7 @@ export function PnlReport({
       const pending: Pending[] = [];
       const tokenSet = new Map<
         string,
-        { network: string; contract: string | null }
+        { network: string; contract: string | null; symbol: string }
       >();
       let minTs = Number.POSITIVE_INFINITY;
       let maxTs = 0;
@@ -157,7 +157,12 @@ export function PnlReport({
           if (tx.counterparty && ownAddresses.has(tx.counterparty.toLowerCase()))
             continue;
           const key = tokenKey(tx.network, tx.contract);
-          tokenSet.set(key, { network: tx.network, contract: tx.contract });
+          if (!tokenSet.has(key))
+            tokenSet.set(key, {
+              network: tx.network,
+              contract: tx.contract,
+              symbol: tx.symbol.trim().toUpperCase(),
+            });
           const ts = new Date(tx.timestamp).getTime();
           if (ts < minTs) minTs = ts;
           if (ts > maxTs) maxTs = ts;
@@ -184,6 +189,7 @@ export function PnlReport({
         key,
         network: v.network,
         contract: v.contract,
+        symbol: v.symbol,
       }));
       const priceRes = await fetch("/api/pnl/prices", {
         method: "POST",
