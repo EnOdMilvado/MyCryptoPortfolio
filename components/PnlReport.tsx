@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { DownloadCsvButton } from "./DownloadCsvButton";
 import { UsdValue } from "./MaskedValue";
-import { formatUsd } from "@/lib/format";
+import { formatAmount, formatUsd } from "@/lib/format";
 import { computePnl, type PnlEvent, type AssetPnl } from "@/lib/pnl/engine";
 import type { Transaction } from "@/lib/chains/transactions/types";
 import type { ChainType } from "@/lib/chains/types";
@@ -14,11 +15,15 @@ export interface PnlWallet {
   address: string;
   chainType: ChainType;
 }
+export interface CurrentHolding {
+  asset: string;
+  amount: number;
+  valueUsd: number;
+}
 
 const DEFAULT_FROM = "2025-01-01";
 const DEFAULT_TO = "2025-12-31";
 
-/** Stablecoins we never report as a taxable asset (1:1 USD, no gain/loss). */
 const STABLE_ASSETS = new Set([
   "USDT",
   "USDC",
@@ -38,7 +43,6 @@ function tokenKey(network: string, contract: string | null): string {
   return `${network}|${c}`;
 }
 
-/** Nearest historical price (USD) to a timestamp from a [[ms, price], …] series. */
 function nearestPrice(series: [number, number][], ms: number): number | null {
   if (!series || series.length === 0) return null;
   let best = series[0];
@@ -50,7 +54,6 @@ function nearestPrice(series: [number, number][], ms: number): number | null {
       best = p;
     }
   }
-  // Guard: if the nearest point is more than 4 days away, treat as unknown.
   if (bestDiff > 4 * 24 * 3600 * 1000) return null;
   return best[1];
 }
@@ -74,13 +77,48 @@ async function mapWithConcurrency<T, R>(
   return out;
 }
 
+/** Month windows [startMs,endMs] covering [from,to], for chunked API backfill. */
+function monthWindows(fromIso: string, toIso: string): { startMs: number; endMs: number }[] {
+  const out: { startMs: number; endMs: number }[] = [];
+  const start = new Date(fromIso);
+  const end = new Date(toIso);
+  let cur = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
+  while (cur.getTime() <= end.getTime()) {
+    const next = new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth() + 1, 1));
+    out.push({
+      startMs: Math.max(cur.getTime(), start.getTime()),
+      endMs: Math.min(next.getTime() - 1, end.getTime()),
+    });
+    cur = next;
+  }
+  return out;
+}
+
+interface Row {
+  asset: string;
+  amount: number;
+  valueUsd: number;
+  buysUsd: number;
+  sellsUsd: number;
+  profit: number;
+  loss: number;
+  net: number;
+  estimated: boolean;
+  missingCostBasis: boolean;
+}
+
 export function PnlReport({
   exchangeEvents,
   wallets,
+  currentHoldings,
+  exchangeIds,
 }: {
   exchangeEvents: PnlEvent[];
   wallets: PnlWallet[];
+  currentHoldings: CurrentHolding[];
+  exchangeIds: string[];
 }) {
+  const router = useRouter();
   const [fromDate, setFromDate] = useState(DEFAULT_FROM);
   const [toDate, setToDate] = useState(DEFAULT_TO);
 
@@ -91,6 +129,9 @@ export function PnlReport({
   const [unpriced, setUnpriced] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState("");
+
   const fromIso = fromDate ? `${fromDate}T00:00:00Z` : null;
   const toIso = toDate ? `${toDate}T23:59:59Z` : null;
 
@@ -98,12 +139,51 @@ export function PnlReport({
     () => [...exchangeEvents, ...onChainEvents],
     [exchangeEvents, onChainEvents],
   );
-  const result = useMemo(
+  const pnl = useMemo(
     () => computePnl(allEvents, fromIso, toIso),
     [allEvents, fromIso, toIso],
   );
 
-  // Own addresses → used to drop internal transfers (wallet-to-wallet).
+  // Merge current holdings with per-asset P&L into one table.
+  const rows = useMemo<Row[]>(() => {
+    const byAsset = new Map<string, AssetPnl>();
+    for (const a of pnl.assets) byAsset.set(a.asset, a);
+    const holdingByAsset = new Map<string, CurrentHolding>();
+    for (const h of currentHoldings) holdingByAsset.set(h.asset, h);
+
+    const assets = new Set<string>([
+      ...currentHoldings.map((h) => h.asset),
+      ...pnl.assets.map((a) => a.asset),
+    ]);
+
+    const out: Row[] = [];
+    for (const asset of assets) {
+      if (STABLE_ASSETS.has(asset)) continue; // stables: no gain/loss
+      const a = byAsset.get(asset);
+      const h = holdingByAsset.get(asset);
+      out.push({
+        asset,
+        amount: h?.amount ?? 0,
+        valueUsd: h?.valueUsd ?? 0,
+        buysUsd: a?.buysUsd ?? 0,
+        sellsUsd: a?.sellsUsd ?? 0,
+        profit: a?.realizedProfit ?? 0,
+        loss: a?.realizedLoss ?? 0,
+        net: a?.realizedUsd ?? 0,
+        estimated: a?.estimated ?? false,
+        missingCostBasis: a?.missingCostBasis ?? false,
+      });
+    }
+    // Sort: assets with realized activity first (by |net|), then by value.
+    out.sort((x, y) => {
+      const ax = Math.abs(x.net) + x.buysUsd + x.sellsUsd;
+      const ay = Math.abs(y.net) + y.buysUsd + y.sellsUsd;
+      if (ay !== ax) return ay - ax;
+      return y.valueUsd - x.valueUsd;
+    });
+    return out;
+  }, [pnl, currentHoldings]);
+
   const ownAddresses = useMemo(
     () => new Set(wallets.map((w) => w.address.toLowerCase())),
     [wallets],
@@ -114,7 +194,6 @@ export function PnlReport({
     setError(null);
     setUnpriced([]);
     try {
-      // 1) Fetch transactions for every TAX wallet (bounded concurrency).
       let done = 0;
       const perWallet = await mapWithConcurrency(wallets, 4, async (w) => {
         try {
@@ -133,7 +212,6 @@ export function PnlReport({
         }
       });
 
-      // 2) Keep external in/out transfers only (drop internal + failed + dust).
       interface Pending {
         wallet: PnlWallet;
         tx: Transaction;
@@ -153,7 +231,6 @@ export function PnlReport({
           if (tx.direction !== "in" && tx.direction !== "out") continue;
           if (!tx.timestamp || !tx.amount || tx.amount <= 0 || !tx.symbol) continue;
           if (STABLE_ASSETS.has(tx.symbol.trim().toUpperCase())) continue;
-          // Internal transfer between the user's own wallets → not a buy/sell.
           if (tx.counterparty && ownAddresses.has(tx.counterparty.toLowerCase()))
             continue;
           const key = tokenKey(tx.network, tx.contract);
@@ -182,8 +259,6 @@ export function PnlReport({
         return;
       }
 
-      // 3) Historical prices for the full span of the activity (so pre-window
-      //    acquisitions still get a cost basis).
       setProgress("Fetching historical prices…");
       const tokens = [...tokenSet.entries()].map(([key, v]) => ({
         key,
@@ -208,7 +283,6 @@ export function PnlReport({
       if (!priceRes.ok) throw new Error(priceJson.error ?? "Price fetch failed");
       const prices = priceJson.prices ?? {};
 
-      // 4) Build estimated events; track symbols we couldn't price.
       const events: PnlEvent[] = [];
       const unpricedSyms = new Set<string>();
       for (const p of pending) {
@@ -241,30 +315,66 @@ export function PnlReport({
     }
   }
 
+  // Pull older exchange trades via the API, one month per call per exchange so
+  // each request stays inside the function time budget. Slow but complete.
+  async function syncExchangeHistory() {
+    if (exchangeIds.length === 0 || !fromIso || !toIso) return;
+    setSyncing(true);
+    setError(null);
+    try {
+      const windows = monthWindows(fromIso, toIso);
+      const total = windows.length * exchangeIds.length;
+      let done = 0;
+      for (const exId of exchangeIds) {
+        for (const w of windows) {
+          setSyncMsg(`Syncing exchange trades… ${++done}/${total}`);
+          try {
+            await fetch("/api/exchanges/refresh", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                exchangeId: exId,
+                kinds: ["trades", "orders"],
+                startTimeMs: w.startMs,
+                endTimeMs: w.endMs,
+              }),
+            });
+          } catch {
+            // keep going; partial data still helps
+          }
+        }
+      }
+      setSyncMsg("Done — reloading…");
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Sync failed");
+    } finally {
+      setSyncing(false);
+      setSyncMsg("");
+    }
+  }
+
   const csvColumns = [
-    { header: "Asset", value: (a: AssetPnl) => a.asset },
-    { header: "Buys (USD)", value: (a: AssetPnl) => a.buysUsd.toFixed(2) },
-    { header: "Sells (USD)", value: (a: AssetPnl) => a.sellsUsd.toFixed(2) },
-    {
-      header: "Realized P&L (USD)",
-      value: (a: AssetPnl) => a.realizedUsd.toFixed(2),
-    },
-    { header: "Fees (USD)", value: (a: AssetPnl) => a.feeUsd.toFixed(2) },
-    { header: "Estimated", value: (a: AssetPnl) => (a.estimated ? "yes" : "no") },
-    {
-      header: "Incomplete cost basis",
-      value: (a: AssetPnl) => (a.missingCostBasis ? "yes" : "no"),
-    },
+    { header: "Asset", value: (r: Row) => r.asset },
+    { header: "Amount", value: (r: Row) => r.amount },
+    { header: "Value now (USD)", value: (r: Row) => r.valueUsd.toFixed(2) },
+    { header: "Buys (USD)", value: (r: Row) => r.buysUsd.toFixed(2) },
+    { header: "Sells (USD)", value: (r: Row) => r.sellsUsd.toFixed(2) },
+    { header: "Profit (USD)", value: (r: Row) => r.profit.toFixed(2) },
+    { header: "Loss (USD)", value: (r: Row) => r.loss.toFixed(2) },
+    { header: "Net P&L (USD)", value: (r: Row) => r.net.toFixed(2) },
+    { header: "Estimated", value: (r: Row) => (r.estimated ? "yes" : "no") },
   ];
 
   return (
     <div className="space-y-6">
       <header className="card p-5 sm:p-6 space-y-4">
         <div>
-          <h1 className="text-2xl font-bold text-text">Profit &amp; Loss report</h1>
+          <h1 className="text-2xl font-bold text-text">Profit &amp; Loss · holdings</h1>
           <p className="text-sm text-text-muted mt-1">
-            Realized gains/losses per token over the selected period, from
-            TAX-marked wallets and exchanges only.
+            Every token you hold (TAX-marked wallets &amp; exchanges) with realized
+            profit / loss for the selected period. Exchange trades are exact;
+            on-chain is estimated.
           </p>
         </div>
         <div className="flex flex-wrap items-end gap-3">
@@ -288,23 +398,33 @@ export function PnlReport({
               className="mt-0.5 px-2 py-1 text-sm rounded border border-border bg-surface text-text"
             />
           </label>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            {exchangeIds.length > 0 && (
+              <button
+                type="button"
+                onClick={syncExchangeHistory}
+                disabled={syncing}
+                className="btn-ghost text-sm"
+                title="Pull older trade history from the exchange APIs for the selected period (slow)"
+              >
+                {syncing ? syncMsg || "Syncing…" : "⟳ Sync exchange history"}
+              </button>
+            )}
             {!onChainLoaded && (
               <button
                 type="button"
                 onClick={loadOnChain}
                 disabled={loading || wallets.length === 0}
                 className="btn-ghost text-sm"
-                title="Fetch on-chain transactions and estimate historical prices"
               >
                 {loading ? progress || "Loading…" : "+ Add on-chain (estimated)"}
               </button>
             )}
             <DownloadCsvButton
               filename={`pnl-${fromDate || "start"}_to_${toDate || "end"}`}
-              rows={result.assets}
+              rows={rows}
               columns={csvColumns}
-              disabled={result.assets.length === 0}
+              disabled={rows.length === 0}
               label="Export CSV"
             />
           </div>
@@ -317,101 +437,108 @@ export function PnlReport({
       </header>
 
       {/* Totals */}
-      <section className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <TotalCard label="Total buys" value={result.totalBuysUsd} />
-        <TotalCard label="Total sells" value={result.totalSellsUsd} />
-        <TotalCard
-          label="Realized P&L"
-          value={result.totalRealizedUsd}
-          colorBySign
-        />
+      <section className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <TotalCard label="Total buys" value={pnl.totalBuysUsd} />
+        <TotalCard label="Total sells" value={pnl.totalSellsUsd} />
+        <TotalCard label="Profit" value={pnl.totalProfit} positive />
+        <TotalCard label="Net P&L" value={pnl.totalRealizedUsd} colorBySign />
       </section>
 
-      {/* Per-asset table */}
+      {/* Holdings + P&L table */}
       <section className="card p-0 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-surface-2/80 text-text-muted">
               <tr>
-                <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide">
-                  Asset
-                </th>
-                <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide">
-                  Buys
-                </th>
-                <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide">
-                  Sells
-                </th>
-                <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide">
-                  Realized P&L
-                </th>
-                <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide">
-                  Notes
-                </th>
+                <Th>Asset</Th>
+                <Th right>Amount</Th>
+                <Th right>Value now</Th>
+                <Th right>Buys</Th>
+                <Th right>Sells</Th>
+                <Th right>Profit</Th>
+                <Th right>Loss</Th>
+                <Th right>Net P&L</Th>
               </tr>
             </thead>
             <tbody>
-              {result.assets.map((a, i) => (
-                <tr key={a.asset} className={i % 2 ? "bg-surface-2/30" : ""}>
-                  <td className="px-3 py-2 font-semibold text-text">{a.asset}</td>
-                  <td className="px-3 py-2 text-right tabular">
-                    {formatUsd(a.buysUsd)}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular">
-                    {formatUsd(a.sellsUsd)}
-                  </td>
-                  <td
-                    className={`px-3 py-2 text-right tabular font-semibold ${
-                      a.realizedUsd >= 0 ? "text-success" : "text-danger"
-                    }`}
-                  >
-                    {a.realizedUsd >= 0 ? "+" : ""}
-                    {formatUsd(a.realizedUsd)}
-                  </td>
-                  <td className="px-3 py-2 text-xs text-text-muted">
-                    {a.estimated && (
-                      <span className="pill mr-1" title="Includes estimated on-chain prices">
+              {rows.map((r, i) => (
+                <tr key={r.asset} className={i % 2 ? "bg-surface-2/30" : ""}>
+                  <td className="px-3 py-2 font-semibold text-text whitespace-nowrap">
+                    {r.asset}
+                    {r.estimated && (
+                      <span className="pill ml-1" title="Includes estimated on-chain prices">
                         est.
                       </span>
                     )}
-                    {a.missingCostBasis && (
-                      <span className="text-amber-500" title="Sold more than the known acquisition history — cost basis incomplete, gain overstated">
-                        ⚠ partial cost basis
+                    {r.missingCostBasis && (
+                      <span className="ml-1 text-amber-500" title="Sold more than the known acquisition history — cost basis incomplete">
+                        ⚠
                       </span>
                     )}
                   </td>
+                  <td className="px-3 py-2 text-right tabular text-text-muted whitespace-nowrap">
+                    {r.amount > 0 ? formatAmount(r.amount) : "—"}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular whitespace-nowrap">
+                    {r.valueUsd > 0 ? formatUsd(r.valueUsd) : "—"}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular whitespace-nowrap">
+                    {r.buysUsd > 0 ? formatUsd(r.buysUsd) : "—"}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular whitespace-nowrap">
+                    {r.sellsUsd > 0 ? formatUsd(r.sellsUsd) : "—"}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular text-success whitespace-nowrap">
+                    {r.profit > 0 ? `+${formatUsd(r.profit)}` : "—"}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular text-danger whitespace-nowrap">
+                    {r.loss < 0 ? formatUsd(r.loss) : "—"}
+                  </td>
+                  <td
+                    className={`px-3 py-2 text-right tabular font-semibold whitespace-nowrap ${
+                      r.net > 0 ? "text-success" : r.net < 0 ? "text-danger" : "text-text-muted"
+                    }`}
+                  >
+                    {r.net !== 0 ? `${r.net > 0 ? "+" : ""}${formatUsd(r.net)}` : "—"}
+                  </td>
                 </tr>
               ))}
-              {result.assets.length === 0 && (
+              {rows.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-3 py-8 text-center text-text-muted">
-                    No buys or sells in this period yet. Exchange trades show
-                    instantly; click “Add on-chain (estimated)” for wallets.
+                  <td colSpan={8} className="px-3 py-8 text-center text-text-muted">
+                    No TAX-marked holdings or trades yet.
                   </td>
                 </tr>
               )}
             </tbody>
-            {result.assets.length > 0 && (
+            {rows.length > 0 && (
               <tfoot className="border-t-2 border-border bg-surface-2/40 font-bold">
                 <tr>
-                  <td className="px-3 py-2 text-xs uppercase text-text-muted">
-                    Total
+                  <td className="px-3 py-2 text-xs uppercase text-text-muted">Total</td>
+                  <td />
+                  <td className="px-3 py-2 text-right tabular">
+                    {formatUsd(rows.reduce((s, r) => s + r.valueUsd, 0))}
                   </td>
                   <td className="px-3 py-2 text-right tabular">
-                    {formatUsd(result.totalBuysUsd)}
+                    {formatUsd(pnl.totalBuysUsd)}
                   </td>
                   <td className="px-3 py-2 text-right tabular">
-                    {formatUsd(result.totalSellsUsd)}
+                    {formatUsd(pnl.totalSellsUsd)}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular text-success">
+                    +{formatUsd(pnl.totalProfit)}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular text-danger">
+                    {formatUsd(pnl.totalLoss)}
                   </td>
                   <td
                     className={`px-3 py-2 text-right tabular ${
-                      result.totalRealizedUsd >= 0 ? "text-success" : "text-danger"
+                      pnl.totalRealizedUsd >= 0 ? "text-success" : "text-danger"
                     }`}
                   >
-                    {result.totalRealizedUsd >= 0 ? "+" : ""}
-                    {formatUsd(result.totalRealizedUsd)}
+                    {pnl.totalRealizedUsd >= 0 ? "+" : ""}
+                    {formatUsd(pnl.totalRealizedUsd)}
                   </td>
-                  <td />
                 </tr>
               </tfoot>
             )}
@@ -421,23 +548,33 @@ export function PnlReport({
 
       {unpriced.length > 0 && (
         <p className="text-xs text-text-muted">
-          No historical price found for: {unpriced.join(", ")} — excluded from
-          P&amp;L; review these manually.
+          No historical price found for: {unpriced.join(", ")} — their on-chain
+          P&amp;L is excluded; review manually.
         </p>
       )}
 
-      {/* Disclaimer */}
       <div className="card bg-surface-2/40 text-xs text-text-muted leading-relaxed">
         <p className="font-semibold text-text mb-1">Important</p>
-        Exchange trades use exact prices from your trade history. On-chain rows
-        are marked <span className="pill">est.</span> — they use estimated
-        historical prices and treat external transfers as buys/sells (internal
-        wallet-to-wallet transfers are excluded). Cost basis is FIFO. This report
-        is a preparation aid in USD, not tax advice or an official filing —
-        have your accountant verify it, convert to ILS at the official rates, and
-        apply the relevant Israeli tax rules.
+        Exchange trades use exact prices. On-chain rows are{" "}
+        <span className="pill">est.</span> — estimated historical prices,
+        external transfers treated as buys/sells (internal wallet-to-wallet moves
+        excluded), FIFO cost basis. Exchange APIs only return recent history by
+        default — use “Sync exchange history” to backfill older months (it’s slow
+        because the exchanges page trade data per symbol). This is a USD
+        preparation aid, not tax advice — verify with your accountant and convert
+        to ILS at the official rates.
       </div>
     </div>
+  );
+}
+
+function Th({ children, right }: { children: React.ReactNode; right?: boolean }) {
+  return (
+    <th
+      className={`px-3 py-2 text-xs font-semibold uppercase tracking-wide ${right ? "text-right" : "text-left"}`}
+    >
+      {children}
+    </th>
   );
 }
 
@@ -445,21 +582,25 @@ function TotalCard({
   label,
   value,
   colorBySign,
+  positive,
 }: {
   label: string;
   value: number;
   colorBySign?: boolean;
+  positive?: boolean;
 }) {
   const color = colorBySign
     ? value >= 0
       ? "text-success"
       : "text-danger"
-    : "text-text";
+    : positive
+      ? "text-success"
+      : "text-text";
   return (
     <div className="card">
-      <p className="text-sm font-semibold text-text-muted">{label}</p>
-      <p className={`mt-1 text-2xl font-extrabold tabular ${color}`}>
-        {colorBySign && value >= 0 ? "+" : ""}
+      <p className="text-xs font-semibold text-text-muted">{label}</p>
+      <p className={`mt-1 text-xl font-extrabold tabular ${color}`}>
+        {(colorBySign && value >= 0) || positive ? "+" : ""}
         <UsdValue value={value} priceUsd={1} />
       </p>
     </div>

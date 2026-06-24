@@ -57,6 +57,10 @@ export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as {
     exchangeId?: string;
     kinds?: SyncKind[];
+    /** Optional explicit window (ms epoch) — used to backfill older history
+     *  one slice at a time. Defaults to the last 90 days. */
+    startTimeMs?: number;
+    endTimeMs?: number;
   };
   const kinds: SyncKind[] =
     Array.isArray(body.kinds) && body.kinds.length > 0
@@ -207,8 +211,8 @@ export async function POST(request: Request) {
       }
     }
 
-    const endMs = Date.now();
-    const startMs = endMs - NINETY_DAYS_MS;
+    const endMs = body.endTimeMs ?? Date.now();
+    const startMs = body.startTimeMs ?? endMs - NINETY_DAYS_MS;
 
     // --- TRADES --- (needs symbols; derive from spot if we just fetched it)
     if (kinds.includes("trades")) {

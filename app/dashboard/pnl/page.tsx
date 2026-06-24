@@ -1,7 +1,11 @@
 import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase/server";
 import { NavBar } from "@/components/NavBar";
-import { PnlReport, type PnlWallet } from "@/components/PnlReport";
+import {
+  PnlReport,
+  type PnlWallet,
+  type CurrentHolding,
+} from "@/components/PnlReport";
 import {
   exchangeTradesToEvents,
   type ExchangeTradeRow,
@@ -96,6 +100,39 @@ export default async function PnlPage() {
     }
   }
 
+  // Current holdings (TAX-marked wallets + exchanges) aggregated per asset, so
+  // the report can show a holdings table with live amount/value alongside P&L.
+  const holdingsMap = new Map<string, { amount: number; valueUsd: number }>();
+  const add = (sym: string | null, amount: number, valueUsd: number) => {
+    const a = (sym ?? "").trim().toUpperCase();
+    if (!a) return;
+    const cur = holdingsMap.get(a);
+    if (cur) {
+      cur.amount += amount;
+      cur.valueUsd += valueUsd;
+    } else holdingsMap.set(a, { amount, valueUsd });
+  };
+  const walletIds = wallets.map((w) => w.id);
+  if (walletIds.length > 0) {
+    const { data: hc } = await supabase
+      .from("crypto_holdings_cache")
+      .select("symbol, amount, value_usd")
+      .in("wallet_id", walletIds);
+    for (const h of (hc as { symbol: string | null; amount: number | string; value_usd: number | string | null }[] | null) ?? [])
+      add(h.symbol, Number(h.amount), Number(h.value_usd ?? 0));
+  }
+  if (exchanges.length > 0) {
+    const { data: bc } = await supabase
+      .from("crypto_exchange_balances_cache")
+      .select("asset, amount, value_usd")
+      .in("exchange_id", exchanges.map((e) => e.id));
+    for (const b of (bc as { asset: string; amount: number | string; value_usd: number | string | null }[] | null) ?? [])
+      add(b.asset, Number(b.amount), Number(b.value_usd ?? 0));
+  }
+  const currentHoldings: CurrentHolding[] = [...holdingsMap.entries()].map(
+    ([asset, v]) => ({ asset, amount: v.amount, valueUsd: v.valueUsd }),
+  );
+
   return (
     <>
       <NavBar
@@ -107,7 +144,12 @@ export default async function PnlPage() {
         }}
       />
       <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
-        <PnlReport exchangeEvents={exchangeEvents} wallets={wallets} />
+        <PnlReport
+          exchangeEvents={exchangeEvents}
+          wallets={wallets}
+          currentHoldings={currentHoldings}
+          exchangeIds={exchanges.map((e) => e.id)}
+        />
       </main>
     </>
   );

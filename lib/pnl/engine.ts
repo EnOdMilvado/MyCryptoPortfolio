@@ -44,6 +44,10 @@ export interface AssetPnl {
   sellsUsd: number;
   /** Realized gain/loss (proceeds − FIFO cost) for sells inside the window. */
   realizedUsd: number;
+  /** Sum of the positive realized amounts (gains only). */
+  realizedProfit: number;
+  /** Sum of the negative realized amounts (losses only, ≤ 0). */
+  realizedLoss: number;
   feeUsd: number;
   /** Any event contributing to this asset used an estimated price. */
   estimated: boolean;
@@ -59,6 +63,8 @@ export interface PnlResult {
   totalBuysUsd: number;
   totalSellsUsd: number;
   totalRealizedUsd: number;
+  totalProfit: number;
+  totalLoss: number;
   totalFeeUsd: number;
   anyEstimated: boolean;
   anyMissingCostBasis: boolean;
@@ -112,6 +118,8 @@ export function computePnl(
     let sellsQty = 0;
     let sellsUsd = 0;
     let realizedUsd = 0;
+    let realizedProfit = 0;
+    let realizedLoss = 0;
     let feeUsd = 0;
     let estimated = false;
     let missingCostBasis = false;
@@ -149,7 +157,10 @@ export function computePnl(
         if (within) {
           sellsQty += e.qty;
           sellsUsd += e.usdValue;
-          realizedUsd += e.usdValue - costBasis;
+          const realized = e.usdValue - costBasis;
+          realizedUsd += realized;
+          if (realized >= 0) realizedProfit += realized;
+          else realizedLoss += realized;
         }
       }
     }
@@ -164,6 +175,8 @@ export function computePnl(
       sellsQty,
       sellsUsd,
       realizedUsd,
+      realizedProfit,
+      realizedLoss,
       feeUsd,
       estimated,
       missingCostBasis,
@@ -178,6 +191,8 @@ export function computePnl(
     totalBuysUsd: assets.reduce((s, a) => s + a.buysUsd, 0),
     totalSellsUsd: assets.reduce((s, a) => s + a.sellsUsd, 0),
     totalRealizedUsd: assets.reduce((s, a) => s + a.realizedUsd, 0),
+    totalProfit: assets.reduce((s, a) => s + a.realizedProfit, 0),
+    totalLoss: assets.reduce((s, a) => s + a.realizedLoss, 0),
     totalFeeUsd: assets.reduce((s, a) => s + a.feeUsd, 0),
     anyEstimated: assets.some((a) => a.estimated),
     anyMissingCostBasis: assets.some((a) => a.missingCostBasis),
