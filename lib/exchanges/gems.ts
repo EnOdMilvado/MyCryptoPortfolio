@@ -595,8 +595,8 @@ export const gemsAdapter: ExchangeAdapter = {
         if (Array.isArray(balances)) {
           for (const b of balances) {
             const sym = normalizeAsset(b.currency);
-            if (out[sym] != null) continue;
             if (!wanted.has(sym)) continue;
+            if (out[sym] != null) continue;
             const amount = parseFloat(b.balance);
             const usdt = b.currency_usdt != null ? parseFloat(b.currency_usdt) : NaN;
             if (Number.isFinite(amount) && amount > 0 && Number.isFinite(usdt) && usdt > 0) {
