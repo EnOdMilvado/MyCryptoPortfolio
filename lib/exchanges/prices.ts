@@ -4,6 +4,53 @@ import { getCoinGeckoPricesBySymbol, getNativePrices } from "@/lib/chains/prices
 import { getCmcQuotes, isCmcEnabled, type CmcQuote } from "@/lib/chains/cmc_prices";
 import { getDexScreenerPricesBySymbol } from "@/lib/chains/dexscreener_symbol";
 
+const PRICE_CACHE_TTL_MS = 45_000;
+const QUOTE_CACHE_TTL_MS = 45_000;
+
+type CachedPrice = { priceUsd: number; at: number; source: string };
+type CachedQuote = { priceUsd: number; change24h: number | null; at: number; source: string };
+
+const lastKnownGoodPrice = new Map<string, CachedPrice>();
+const lastKnownGoodQuote = new Map<string, CachedQuote>();
+
+function nowMs() {
+  return Date.now();
+}
+
+function normalizeSym(sym: string) {
+  return sym.trim().toUpperCase();
+}
+
+function isValidPrice(price: unknown): price is number {
+  return typeof price === "number" && Number.isFinite(price) && price > 0 && price < 1_000_000;
+}
+
+function getCachedPrice(sym: string): number | null {
+  const cached = lastKnownGoodPrice.get(normalizeSym(sym));
+  if (!cached) return null;
+  return nowMs() - cached.at <= PRICE_CACHE_TTL_MS ? cached.priceUsd : null;
+}
+
+function getCachedQuote(sym: string): CachedQuote | null {
+  const cached = lastKnownGoodQuote.get(normalizeSym(sym));
+  if (!cached) return null;
+  return nowMs() - cached.at <= QUOTE_CACHE_TTL_MS ? cached : null;
+}
+
+function rememberPrice(sym: string, priceUsd: number, source: string) {
+  lastKnownGoodPrice.set(normalizeSym(sym), { priceUsd, at: nowMs(), source });
+}
+
+function rememberQuote(sym: string, priceUsd: number, change24h: number | null, source: string) {
+  lastKnownGoodQuote.set(normalizeSym(sym), { priceUsd, change24h, at: nowMs(), source });
+  lastKnownGoodPrice.set(normalizeSym(sym), { priceUsd, at: nowMs(), source });
+}
+
+async function raceResolvers<T>(tasks: Array<Promise<T | null>>): Promise<T | null> {
+  if (tasks.length === 0) return null;
+  return await Promise.any(tasks.map((p) => p.then((v) => (v == null ? Promise.reject(new Error("null")) : v)))).catch(() => null);
+}
+
 // Common exchange asset symbols → CoinGecko ID for native-coin fallback.
 // Hand-curated to disambiguate (ETH could be many tokens — we pin "ethereum").
 const SYMBOL_TO_CG: Record<string, string> = {
@@ -122,68 +169,94 @@ export async function resolvePricesForSymbols(
   const out: Record<string, number> = {};
   if (symbols.length === 0) return out;
 
-  // 1) CoinMarketCap (preferred when configured)
+  const wanted = Array.from(new Set(symbols.map(normalizeSym)));
+  const missing = wanted.filter((s) => getCachedPrice(s) == null);
+  for (const sym of wanted) {
+    const cached = getCachedPrice(sym);
+    if (cached != null) out[sym] = cached;
+  }
+  if (missing.length === 0) return out;
+
+  const resolvers: Array<Promise<Record<string, number> | null>> = [];
   if (isCmcEnabled()) {
-    try {
-      const cmc = await getCmcQuotes(symbols);
-      for (const sym of Object.keys(cmc)) out[sym] = cmc[sym].priceUsd;
-    } catch {
-      // non-fatal; fall through to other resolvers
+    resolvers.push(
+      getCmcQuotes(missing)
+        .then((cmc) => {
+          const next: Record<string, number> = {};
+          for (const sym of Object.keys(cmc)) {
+            if (isValidPrice(cmc[sym]?.priceUsd)) next[normalizeSym(sym)] = cmc[sym].priceUsd;
+          }
+          return next;
+        })
+        .catch(() => null),
+    );
+  }
+  resolvers.push(
+    getAlchemyPricesBySymbol(missing)
+      .then((al) => {
+        const next: Record<string, number> = {};
+        for (const sym of Object.keys(al)) if (isValidPrice(al[sym])) next[normalizeSym(sym)] = al[sym];
+        return next;
+      })
+      .catch(() => null),
+  );
+  const ids: string[] = [];
+  const idToSym: Record<string, string> = {};
+  for (const sym of missing) {
+    const id = SYMBOL_TO_CG[sym];
+    if (id) {
+      ids.push(id);
+      idToSym[id] = sym;
     }
   }
-
-  let missing = symbols.filter((s) => out[s.toUpperCase()] == null);
-
-  if (missing.length > 0) {
-    const al = await getAlchemyPricesBySymbol(missing);
-    for (const s of missing) {
-      const upper = s.toUpperCase();
-      if (al[upper] != null) out[upper] = al[upper];
-    }
-    missing = symbols.filter((s) => out[s.toUpperCase()] == null);
+  if (ids.length > 0) {
+    resolvers.push(
+      getNativePrices(ids)
+        .then((cg) => {
+          const next: Record<string, number> = {};
+          for (const id of Object.keys(cg)) next[idToSym[id]] = cg[id];
+          return next;
+        })
+        .catch(() => null),
+    );
   }
+  resolvers.push(
+    getCoinGeckoPricesBySymbol(missing)
+      .then((cg) => {
+        const next: Record<string, number> = {};
+        for (const sym of Object.keys(cg)) next[normalizeSym(sym)] = cg[sym];
+        return next;
+      })
+      .catch(() => null),
+  );
+  resolvers.push(
+    getDexScreenerPricesBySymbol(missing)
+      .then((ds) => {
+        const next: Record<string, number> = {};
+        for (const sym of Object.keys(ds)) if (isValidPrice(ds[sym].priceUsd)) next[normalizeSym(sym)] = ds[sym].priceUsd;
+        return next;
+      })
+      .catch(() => null),
+  );
 
-  // 3) CoinGecko hand-curated SYMBOL_TO_CG mapping — uses known coin IDs so
-  //    ambiguous tickers (e.g. ETH) always resolve to the right project.
-  if (missing.length > 0) {
-    const ids: string[] = [];
-    const idToSym: Record<string, string> = {};
-    for (const sym of missing) {
-      const id = SYMBOL_TO_CG[sym.toUpperCase()];
-      if (id) {
-        ids.push(id);
-        idToSym[id] = sym.toUpperCase();
+  const results = await Promise.allSettled(resolvers);
+  for (const r of results) {
+    if (r.status !== "fulfilled" || !r.value) continue;
+    for (const [sym, price] of Object.entries(r.value)) {
+      const upper = normalizeSym(sym);
+      if (out[upper] == null && isValidPrice(price)) {
+        out[upper] = price;
+        rememberPrice(upper, price, "resolver");
       }
     }
-    if (ids.length > 0) {
-      const cg = await getNativePrices(ids);
-      for (const id of Object.keys(cg)) {
-        out[idToSym[id]] = cg[id];
-      }
-    }
-    missing = symbols.filter((s) => out[s.toUpperCase()] == null);
   }
 
-  // 4) CoinGecko symbol fallback — catches the long tail (SUI, MANTRA, ENJ,
-  //    QRL, GLQ, …). Picks the highest market-cap match per ticker.
-  if (missing.length > 0) {
-    const cg = await getCoinGeckoPricesBySymbol(missing);
-    for (const sym of Object.keys(cg)) {
-      out[sym] = cg[sym];
-    }
-    missing = symbols.filter((s) => out[s.toUpperCase()] == null);
-  }
-
-  // 5) DexScreener search-by-symbol — last-resort DEX pool lookup for
-  //    anything still missing (covers obscure MEXC / HTX tokens that
-  //    Alchemy's top-1K and CoinGecko's curated symbol search miss).
-  if (missing.length > 0) {
-    const ds = await getDexScreenerPricesBySymbol(missing);
-    for (const sym of Object.keys(ds)) {
-      out[sym] = ds[sym].priceUsd;
+  for (const sym of wanted) {
+    if (out[sym] == null) {
+      const cached = lastKnownGoodPrice.get(sym);
+      if (cached) out[sym] = cached.priceUsd;
     }
   }
-
   return out;
 }
 
@@ -202,65 +275,76 @@ export async function resolvePriceQuotesForSymbols(
   const out: Record<string, { priceUsd: number; change24h: number | null }> = {};
   if (symbols.length === 0) return out;
 
-  // CMC gives both price + 24h in one call.
+  const wanted = Array.from(new Set(symbols.map(normalizeSym)));
+  for (const sym of wanted) {
+    const cached = getCachedQuote(sym);
+    if (cached) out[sym] = { priceUsd: cached.priceUsd, change24h: cached.change24h };
+  }
+  const missing = wanted.filter((s) => out[s] == null);
+  if (missing.length === 0) return out;
+
+  const tasks: Array<Promise<Record<string, CachedQuote> | null>> = [];
   if (isCmcEnabled()) {
-    try {
-      const cmc = await getCmcQuotes(symbols);
-      for (const sym of Object.keys(cmc)) {
-        const q: CmcQuote = cmc[sym];
-        out[sym] = { priceUsd: q.priceUsd, change24h: q.change24h };
-      }
-    } catch {
-      // non-fatal
-    }
+    tasks.push(
+      getCmcQuotes(missing)
+        .then((cmc) => {
+          const next: Record<string, CachedQuote> = {};
+          for (const sym of Object.keys(cmc)) {
+            const q: CmcQuote = cmc[sym];
+            if (isValidPrice(q?.priceUsd)) next[normalizeSym(sym)] = { priceUsd: q.priceUsd, change24h: q.change24h ?? null, at: nowMs(), source: "cmc" };
+          }
+          return next;
+        })
+        .catch(() => null),
+    );
   }
-
-  // Fall back to price-only resolver for whatever's still missing.
-  const missing = symbols.filter((s) => out[s.toUpperCase()] == null);
-  if (missing.length > 0) {
-    const prices = await resolvePricesForSymbols(missing);
-    for (const sym of Object.keys(prices)) {
-      out[sym] = { priceUsd: prices[sym], change24h: null };
-    }
-  }
-
-  // Backfill 24h change from DexScreener for everything where we have a
-  // price but no change (CMC missed it, or the price came from a
-  // change-less source like Alchemy / CoinGecko-by-id). DexScreener
-  // search returns h24 % change alongside price.
-  let needChange = Object.keys(out).filter(
-    (sym) => out[sym].change24h == null,
+  tasks.push(
+    resolvePricesForSymbols(missing)
+      .then((prices) => {
+        const next: Record<string, CachedQuote> = {};
+        for (const sym of Object.keys(prices)) next[normalizeSym(sym)] = { priceUsd: prices[sym], change24h: null, at: nowMs(), source: "price" };
+        return next;
+      })
+      .catch(() => null),
   );
+
+  const settled = await Promise.allSettled(tasks);
+  for (const r of settled) {
+    if (r.status !== "fulfilled" || !r.value) continue;
+    for (const [sym, q] of Object.entries(r.value)) {
+      if (out[sym] == null && isValidPrice(q.priceUsd)) {
+        out[sym] = { priceUsd: q.priceUsd, change24h: q.change24h };
+        rememberQuote(sym, q.priceUsd, q.change24h, q.source);
+      }
+    }
+  }
+
+  const needChange = Object.keys(out).filter((sym) => out[sym].change24h == null);
   if (needChange.length > 0) {
     try {
       const ds = await getDexScreenerPricesBySymbol(needChange);
       for (const sym of Object.keys(ds)) {
         if (out[sym] && out[sym].change24h == null && ds[sym].change24h != null) {
           out[sym] = { ...out[sym], change24h: ds[sym].change24h };
+          rememberQuote(sym, out[sym].priceUsd, ds[sym].change24h, "dexscreener");
         }
       }
-    } catch {
-      // non-fatal — keep nulls
-    }
-    needChange = Object.keys(out).filter((sym) => out[sym].change24h == null);
+    } catch {}
   }
 
-  // Final 24h-change backfill via Alchemy Historical (1 req/token, but
-  // only for what's still missing — typically blue-chips like ETH/SOL
-  // that were resolved by Alchemy by-symbol or CoinGecko-by-id).
-  if (needChange.length > 0) {
+  const stillMissing = Object.keys(out).filter((sym) => out[sym].change24h == null);
+  if (stillMissing.length > 0) {
     try {
       const currentPrices: Record<string, number> = {};
-      for (const sym of needChange) currentPrices[sym] = out[sym].priceUsd;
+      for (const sym of stillMissing) currentPrices[sym] = out[sym].priceUsd;
       const al = await getAlchemyChange24hBySymbol(currentPrices);
       for (const sym of Object.keys(al)) {
         if (out[sym] && out[sym].change24h == null) {
           out[sym] = { ...out[sym], change24h: al[sym] };
+          rememberQuote(sym, out[sym].priceUsd, al[sym], "alchemy-historical");
         }
       }
-    } catch {
-      // non-fatal
-    }
+    } catch {}
   }
 
   return out;

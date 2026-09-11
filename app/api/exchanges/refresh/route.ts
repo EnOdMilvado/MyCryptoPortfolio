@@ -153,7 +153,8 @@ export async function POST(request: Request) {
             );
             for (const k of Object.keys(exchangePrices)) {
               const upper = k.toUpperCase();
-              if (prices[upper] == null) prices[upper] = exchangePrices[k];
+              const px = exchangePrices[k];
+              if (prices[upper] == null && Number.isFinite(px) && px > 0) prices[upper] = px;
             }
           } catch {
             // Non-fatal — keep whatever the global resolver gave us.
