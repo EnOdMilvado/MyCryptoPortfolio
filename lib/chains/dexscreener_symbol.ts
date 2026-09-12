@@ -95,33 +95,60 @@ export async function getDexScreenerPricesBySymbol(
             const v = p.priceUsd ? parseFloat(p.priceUsd) : NaN;
             return Number.isFinite(v) && v > 0 && v < 1_000_000;
           });
-          // Require at least 3 qualifying pools before trusting a median —
-          // with only 1-2 candidates a single manipulated/thin pool can still
-          // dominate the result. Better to return nothing (falls through to
-          // the next resolver) than a wrong price for a rarely-traded ticker.
-          if (candidates.length < 3) return;
+          if (candidates.length === 0) return;
 
-          // Use the MEDIAN price across all qualifying pools instead of just
-          // the highest-liquidity one. A single scam/mirror pool can report
-          // a fabricated liquidity number large enough to win a "pick the
-          // deepest" comparison even after the trusted-chain filter (seen
-          // with a fake ARCH pool reporting billions in liquidity on a real
-          // chain id). The median is immune to one such outlier as long as
-          // it isn't the majority of matches.
-          const prices = candidates
-            .map((p) => parseFloat(p.priceUsd!))
-            .sort((a, b) => a - b);
-          const mid = Math.floor(prices.length / 2);
-          const v =
-            prices.length % 2 === 0
-              ? (prices[mid - 1] + prices[mid]) / 2
-              : prices[mid];
-          const best = candidates.reduce((closest, p) =>
-            Math.abs(parseFloat(p.priceUsd!) - v) <
-            Math.abs(parseFloat(closest.priceUsd!) - v)
-              ? p
-              : closest,
-          );
+          // CRITICAL: group by CONTRACT ADDRESS first, not just symbol.
+          // Search-by-symbol frequently returns pools for several UNRELATED
+          // tokens that merely share a ticker (e.g. "WEN" matches the real
+          // Solana WEN at WENWENvqq... AND several totally different meme
+          // coins on other contracts that also self-labeled "WEN"). Taking
+          // a median across candidates from DIFFERENT contracts silently
+          // blends unrelated tokens' prices into a meaningless number. The
+          // fix: pick the single contract address with the highest total
+          // liquidity across its own pools (the token actually trading at
+          // real volume), THEN take the median of just that contract's
+          // pools to guard against one manipulated pool within it (the
+          // ARCH/MOG/ZRX class of bug).
+          const byAddr: Record<string, DsSearchPair[]> = {};
+          for (const p of candidates) {
+            const addr = (p.baseToken?.address ?? "").toLowerCase();
+            if (!addr) continue;
+            (byAddr[addr] ??= []).push(p);
+          }
+          const addrs = Object.keys(byAddr);
+          if (addrs.length === 0) return;
+          const totalLiq = (addr: string) =>
+            byAddr[addr].reduce((s, p) => s + (p.liquidity?.usd ?? 0), 0);
+          const winningAddr = addrs.reduce((a, b) => (totalLiq(b) > totalLiq(a) ? b : a));
+          const winningPools = byAddr[winningAddr];
+
+          // Require at least 3 qualifying pools for THIS specific contract
+          // before trusting a median — with only 1-2, a single
+          // manipulated/thin pool can still dominate the result. Fall back
+          // to the single/best pool directly when there are fewer.
+          let v: number;
+          let best: DsSearchPair;
+          if (winningPools.length < 3) {
+            best = winningPools.reduce((a, b) =>
+              (b.liquidity?.usd ?? 0) > (a.liquidity?.usd ?? 0) ? b : a,
+            );
+            v = parseFloat(best.priceUsd!);
+          } else {
+            const prices = winningPools
+              .map((p) => parseFloat(p.priceUsd!))
+              .sort((a, b) => a - b);
+            const mid = Math.floor(prices.length / 2);
+            v =
+              prices.length % 2 === 0
+                ? (prices[mid - 1] + prices[mid]) / 2
+                : prices[mid];
+            best = winningPools.reduce((closest, p) =>
+              Math.abs(parseFloat(p.priceUsd!) - v) <
+              Math.abs(parseFloat(closest.priceUsd!) - v)
+                ? p
+                : closest,
+            );
+          }
           out[sym] = {
             priceUsd: v,
             change24h:
