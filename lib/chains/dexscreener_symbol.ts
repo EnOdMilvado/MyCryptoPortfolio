@@ -39,6 +39,24 @@ function shouldSkip(symbol: string): boolean {
   return false;
 }
 
+// Only trust pairs on chains we actually recognize/support elsewhere in the
+// app. DexScreener's /search endpoint indexes dozens of long-tail/novelty
+// "chains" (seen in the wild: "robinhood", tokenized-stock wrapper DEXes)
+// that list scam/mirror tokens with an identical ticker and a wildly
+// inflated fake liquidity figure — e.g. an "ARCH" pool on chainId
+// "robinhood" reporting $1.24B liquidity and a $24.87 price, versus the
+// real Archway ARCH at $0.0004. The $5k liquidity floor alone doesn't
+// catch this because the fake number is deliberately huge. Restricting to
+// known chains removes the entire class of these mirror-pool false
+// positives.
+const TRUSTED_CHAIN_IDS = new Set([
+  "ethereum", "polygon", "arbitrum", "optimism", "base", "avalanche", "bsc",
+  "linea", "blast", "mantle", "berachain", "sonic", "unichain", "worldchain",
+  "apechain", "zksync", "scroll", "gnosis", "celo", "abstract", "ink",
+  "zora", "shape", "fraxtal", "soneium", "polygon-zkevm", "arbitrum-nova",
+  "solana", "bitcoin", "tron",
+]);
+
 /**
  * Search DexScreener by symbol for each input symbol, return the deepest-
  * liquidity DEX pair where baseToken.symbol matches exactly (case-insensitive).
@@ -71,7 +89,8 @@ export async function getDexScreenerPricesBySymbol(
           const json = (await res.json()) as DsSearchResponse;
           const candidates = (json.pairs ?? []).filter((p) => {
             const baseSym = (p.baseToken?.symbol ?? "").toUpperCase();
-            return baseSym === sym;
+            if (baseSym !== sym) return false;
+            return TRUSTED_CHAIN_IDS.has((p.chainId ?? "").toLowerCase());
           });
           if (candidates.length === 0) return;
 
