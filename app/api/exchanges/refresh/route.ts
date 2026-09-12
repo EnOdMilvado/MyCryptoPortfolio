@@ -131,33 +131,35 @@ export async function POST(request: Request) {
         // ticker by an hour or more).
         const prices: Record<string, number> = {};
         const change24h: Record<string, number | null> = {};
-        const quotes = await resolvePriceQuotesForSymbols(symbols);
-        for (const k of Object.keys(quotes)) {
-          const q = quotes[k];
-          prices[k] = q.priceUsd;
-          change24h[k] = q.change24h;
-        }
-        // Exchange ticker as the long-tail fallback. For exchange-specific
-        // altcoins that CMC / Alchemy / CoinGecko / DexScreener all miss,
-        // the exchange itself is usually the only price source — its
-        // public ticker (MEXC) or per-balance valuation (GEMS) covers
-        // those tokens at the cost of some freshness.
-        const stillMissingAfterGlobal = symbols.filter(
-          (s) => prices[s.toUpperCase()] == null,
-        );
-        if (stillMissingAfterGlobal.length > 0 && adapter.fetchAssetPricesUsd) {
+        // Exchange's OWN public ticker goes FIRST, not last. It is the only
+        // source that is guaranteed to be quoting the exact instrument the
+        // user is holding on THIS exchange — a global lookup by bare ticker
+        // (CMC/Alchemy/CoinGecko/DexScreener) can silently resolve to a
+        // different token that happens to share the same symbol on another
+        // chain/market (e.g. Gate's ARCH = Archway at $0.0004, but a global
+        // DexScreener symbol search once matched a scam "ARCH" pool quoted
+        // at $24.87 — turning a $0.44 balance into a fake $24,800). Global
+        // sources are now only used to fill in symbols the exchange itself
+        // doesn't list a ticker for.
+        if (adapter.fetchAssetPricesUsd) {
           try {
-            const exchangePrices = await adapter.fetchAssetPricesUsd(
-              stillMissingAfterGlobal,
-              creds,
-            );
+            const exchangePrices = await adapter.fetchAssetPricesUsd(symbols, creds);
             for (const k of Object.keys(exchangePrices)) {
               const upper = k.toUpperCase();
               const px = exchangePrices[k];
-              if (prices[upper] == null && Number.isFinite(px) && px > 0) prices[upper] = px;
+              if (Number.isFinite(px) && px > 0) prices[upper] = px;
             }
           } catch {
-            // Non-fatal — keep whatever the global resolver gave us.
+            // Non-fatal — global resolvers below still cover this exchange.
+          }
+        }
+        const missingAfterExchange = symbols.filter((s) => prices[s.toUpperCase()] == null);
+        if (missingAfterExchange.length > 0) {
+          const quotes = await resolvePriceQuotesForSymbols(missingAfterExchange);
+          for (const k of Object.keys(quotes)) {
+            const q = quotes[k];
+            if (prices[k] == null) prices[k] = q.priceUsd;
+            change24h[k] = q.change24h;
           }
         }
         // Final long-tail price-only resolver — picks up anything the
