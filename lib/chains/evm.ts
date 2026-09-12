@@ -16,6 +16,7 @@ import {
   getAlchemyTokenPrices,
 } from "./alchemy_prices";
 import { getDexScreenerPricesWithChange } from "./dexscreener";
+import { getCmcQuotes, isCmcEnabled } from "./cmc_prices";
 import {
   buildMetadataCalls,
   decodeAbiString,
@@ -210,23 +211,55 @@ interface PriceInfo {
 }
 
 /**
- * 3-tier price lookup: Alchemy Prices API → CoinGecko → DexScreener.
+ * Price lookup, in order: CMC (by symbol, when we already know it and a key
+ * is configured) → Alchemy Prices → CoinGecko → DexScreener.
  * Returns USD price + 24h % change (when available) per lowercased contract.
+ *
+ * CMC goes first for tokens with a known symbol because it disambiguates by
+ * real market-cap rank, not DEX-pool liquidity — immune to the fake-pool
+ * class of bug DexScreener is vulnerable to (a single manipulated pool
+ * reporting a fabricated liquidity figure, e.g. MOG priced at $12,101 or
+ * ZRX at $62,181 on a real chain, vs. every other pool agreeing on the
+ * true price). `symbolByContract` is optional — callers that don't have
+ * metadata yet simply skip this tier and fall through to the others.
  */
 async function resolveTokenPrices(
   chain: EvmChain,
   contracts: string[],
+  symbolByContract?: Record<string, string>,
 ): Promise<Record<string, PriceInfo>> {
   if (contracts.length === 0) return {};
   const merged: Record<string, PriceInfo> = {};
 
-  // 1) Alchemy Prices — price only (no 24h change available).
-  const alchemy = await getAlchemyTokenPrices(chain, contracts);
-  for (const k of Object.keys(alchemy)) {
-    merged[k] = { usd: alchemy[k], change24h: null };
+  // 1) CoinMarketCap by symbol, when we know the symbol and CMC is enabled.
+  if (symbolByContract && isCmcEnabled()) {
+    const symToContracts: Record<string, string[]> = {};
+    for (const c of contracts) {
+      const sym = symbolByContract[c];
+      if (sym) (symToContracts[sym.toUpperCase()] ??= []).push(c);
+    }
+    const symbols = Object.keys(symToContracts);
+    if (symbols.length > 0) {
+      const cmc = await getCmcQuotes(symbols);
+      for (const sym of Object.keys(cmc)) {
+        const q = cmc[sym];
+        for (const c of symToContracts[sym] ?? []) {
+          merged[c] = { usd: q.priceUsd, change24h: q.change24h };
+        }
+      }
+    }
   }
 
-  // 2) CoinGecko for any still-missing (with 24h change).
+  // 2) Alchemy Prices — price only (no 24h change available).
+  const missingAfterCmc = contracts.filter((c) => merged[c] == null);
+  if (missingAfterCmc.length > 0) {
+    const alchemy = await getAlchemyTokenPrices(chain, missingAfterCmc);
+    for (const k of Object.keys(alchemy)) {
+      if (merged[k] == null) merged[k] = { usd: alchemy[k], change24h: null };
+    }
+  }
+
+  // 3) CoinGecko for any still-missing (with 24h change).
   const missingAfterAlchemy = contracts.filter((c) => merged[c] == null);
   if (missingAfterAlchemy.length > 0) {
     const cg = await getTokenPricesWithChange(chain, missingAfterAlchemy);
@@ -235,7 +268,7 @@ async function resolveTokenPrices(
     }
   }
 
-  // 3) DexScreener for whatever long-tail tokens remain.
+  // 4) DexScreener for whatever long-tail tokens remain.
   const stillMissing = contracts.filter((c) => merged[c] == null);
   if (stillMissing.length > 0) {
     const ds = await getDexScreenerPricesWithChange(chain, stillMissing);
@@ -324,11 +357,17 @@ async function fetchSingleEvmChain(
 
   metadataResults = await fillMissingMetadata(url, tokenEntries, metadataResults);
 
-  // 3) Resolve prices via Alchemy → CoinGecko → DexScreener, all in parallel
-  //    with the native-price lookup.
+  // 3) Resolve prices via CMC → Alchemy → CoinGecko → DexScreener, all in
+  //    parallel with the native-price lookup. Pass the symbol we already
+  //    have from metadata so CMC can be tried first for known tickers.
   const contracts = tokenEntries.map((e) => e.contractAddress.toLowerCase());
+  const symbolByContract: Record<string, string> = {};
+  for (let i = 0; i < tokenEntries.length; i++) {
+    const sym = metadataResults[i]?.symbol;
+    if (sym) symbolByContract[tokenEntries[i].contractAddress.toLowerCase()] = sym;
+  }
   const [tokenPrices, nativePrice] = await Promise.all([
-    resolveTokenPrices(chain, contracts),
+    resolveTokenPrices(chain, contracts, symbolByContract),
     resolveNativePrice(chain),
   ]);
 

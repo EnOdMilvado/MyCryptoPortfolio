@@ -10,20 +10,45 @@ import {
   getAlchemyTokenPrices,
 } from "./alchemy_prices";
 import { getDexScreenerPricesWithChange } from "./dexscreener";
+import { getCmcQuotes, isCmcEnabled } from "./cmc_prices";
 
 interface PriceInfo {
   usd: number;
   change24h: number | null;
 }
 
+// symbolByMint is optional metadata (from the Jupiter token list) that lets
+// CMC-by-symbol run first for tokens with a known ticker. See evm.ts's
+// resolveTokenPrices for the full rationale: CMC disambiguates by real
+// market-cap rank, immune to the fake-pool class of bug DexScreener is
+// vulnerable to (a single manipulated pool with fabricated liquidity).
 async function resolveSolanaTokenPrices(
   mints: string[],
+  symbolByMint?: Record<string, string>,
 ): Promise<Record<string, PriceInfo>> {
   if (mints.length === 0) return {};
   const merged: Record<string, PriceInfo> = {};
-  const alchemy = await getAlchemyTokenPrices("solana", mints);
+  if (symbolByMint && isCmcEnabled()) {
+    const symToMints: Record<string, string[]> = {};
+    for (const m of mints) {
+      const sym = symbolByMint[m.toLowerCase()];
+      if (sym) (symToMints[sym.toUpperCase()] ??= []).push(m.toLowerCase());
+    }
+    const symbols = Object.keys(symToMints);
+    if (symbols.length > 0) {
+      const cmc = await getCmcQuotes(symbols);
+      for (const sym of Object.keys(cmc)) {
+        const q = cmc[sym];
+        for (const m of symToMints[sym] ?? []) {
+          merged[m] = { usd: q.priceUsd, change24h: q.change24h };
+        }
+      }
+    }
+  }
+  const missingBeforeAlchemy = mints.filter((m) => merged[m.toLowerCase()] == null);
+  const alchemy = await getAlchemyTokenPrices("solana", missingBeforeAlchemy);
   for (const k of Object.keys(alchemy))
-    merged[k] = { usd: alchemy[k], change24h: null };
+    if (merged[k] == null) merged[k] = { usd: alchemy[k], change24h: null };
   const missing1 = mints.filter((m) => merged[m.toLowerCase()] == null);
   if (missing1.length > 0) {
     const cg = await getTokenPricesWithChange("solana", missing1);
@@ -191,8 +216,13 @@ export async function fetchSolanaHoldings(address: string): Promise<Holding[]> {
   );
 
   const mints = tokenAccounts.map((a) => a.account.data.parsed.info.mint);
+  const symbolByMint: Record<string, string> = {};
+  for (const m of mints) {
+    const sym = jup.get(m)?.symbol;
+    if (sym) symbolByMint[m.toLowerCase()] = sym;
+  }
   const [tokenPrices, nativePrice] = await Promise.all([
-    resolveSolanaTokenPrices(mints),
+    resolveSolanaTokenPrices(mints, symbolByMint),
     resolveSolanaNativePrice(),
   ]);
   const nativeUsd = nativePrice?.usd ?? null;
