@@ -220,20 +220,30 @@ export async function resolvePricesForSymbols(
         .catch(() => null),
     );
   }
-  resolvers.push(
-    getCoinGeckoPricesBySymbol(missing)
-      .then((cg) => {
-        const next: Record<string, number> = {};
-        for (const sym of Object.keys(cg)) next[normalizeSym(sym)] = cg[sym];
-        return next;
-      })
-      .catch(() => null),
-  );
+  // DexScreener-by-symbol BEFORE the raw CoinGecko-by-symbol lookup.
+  // CoinGecko's /coins/markets?symbols= endpoint disambiguates ticker
+  // collisions (WEN, DESO, ETHA, ...) purely by market-cap ranking, which
+  // regularly picks the wrong coin for exchange dust (e.g. it once resolved
+  // ETHA to the tokenized "iShares Ethereum Trust ETF" instead of an actual
+  // on-chain WEN/DESO token, blowing up valueUsd by orders of magnitude).
+  // DexScreener instead requires a live, liquid ($5k+) DEX pool with an
+  // EXACT symbol match, so for long-tail/collision-prone tickers it is the
+  // more trustworthy source. CoinGecko-by-symbol is kept as the last-resort
+  // fallback below, only for symbols DexScreener has no pool for.
   resolvers.push(
     getDexScreenerPricesBySymbol(missing)
       .then((ds) => {
         const next: Record<string, number> = {};
         for (const sym of Object.keys(ds)) if (isValidPrice(ds[sym].priceUsd)) next[normalizeSym(sym)] = ds[sym].priceUsd;
+        return next;
+      })
+      .catch(() => null),
+  );
+  resolvers.push(
+    getCoinGeckoPricesBySymbol(missing)
+      .then((cg) => {
+        const next: Record<string, number> = {};
+        for (const sym of Object.keys(cg)) next[normalizeSym(sym)] = cg[sym];
         return next;
       })
       .catch(() => null),

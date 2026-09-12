@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { formatRelative } from "@/lib/format";
 
@@ -26,11 +26,19 @@ const CHUNK_SIZE = 1;
 // the client just enough to stay below that ceiling.
 const PARALLEL_LIMIT = 8;
 
+// Auto-refresh on dashboard mount is throttled client-side (localStorage)
+// so navigating between pages / re-rendering doesn't hammer every wallet +
+// exchange API on every visit. A fresh full sync on load is still valuable
+// since prices/balances can be minutes-to-hours stale from the last visit.
+const AUTO_REFRESH_KEY = "crypto-last-auto-refresh";
+const AUTO_REFRESH_MIN_GAP_MS = 2 * 60 * 1000; // don't auto-refresh more than once every 2 min
+
 export function RefreshAllButton({ walletIds, lastFetchedAt, compact = false }: Props) {
   const router = useRouter();
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const autoRanRef = useRef(false);
 
   async function refresh() {
     if (walletIds.length === 0) return;
@@ -179,6 +187,26 @@ export function RefreshAllButton({ walletIds, lastFetchedAt, compact = false }: 
       setRunning(false);
     }
   }
+
+  // Auto-refresh once per mount when the dashboard loads, so the user
+  // always sees a fresh sync of every wallet (all chains) + every exchange
+  // without needing to click "Refresh all" manually. Throttled via
+  // localStorage so switching tabs/pages within the same short window
+  // doesn't re-trigger a full resync repeatedly.
+  useEffect(() => {
+    if (autoRanRef.current) return;
+    if (walletIds.length === 0) return;
+    autoRanRef.current = true;
+    try {
+      const last = Number(window.localStorage.getItem(AUTO_REFRESH_KEY) ?? "0");
+      if (Date.now() - last < AUTO_REFRESH_MIN_GAP_MS) return;
+      window.localStorage.setItem(AUTO_REFRESH_KEY, String(Date.now()));
+    } catch {
+      // localStorage unavailable (e.g. private mode) — still safe to run once.
+    }
+    void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walletIds.length]);
 
   const ageHours = lastFetchedAt
     ? (Date.now() - new Date(lastFetchedAt).getTime()) / 3_600_000
