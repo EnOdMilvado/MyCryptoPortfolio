@@ -90,23 +90,38 @@ export async function getDexScreenerPricesBySymbol(
           const candidates = (json.pairs ?? []).filter((p) => {
             const baseSym = (p.baseToken?.symbol ?? "").toUpperCase();
             if (baseSym !== sym) return false;
-            return TRUSTED_CHAIN_IDS.has((p.chainId ?? "").toLowerCase());
+            if (!TRUSTED_CHAIN_IDS.has((p.chainId ?? "").toLowerCase())) return false;
+            if ((p.liquidity?.usd ?? 0) < 5_000) return false; // wash-trade/honeypot floor
+            const v = p.priceUsd ? parseFloat(p.priceUsd) : NaN;
+            return Number.isFinite(v) && v > 0 && v < 1_000_000;
           });
-          if (candidates.length === 0) return;
+          // Require at least 3 qualifying pools before trusting a median —
+          // with only 1-2 candidates a single manipulated/thin pool can still
+          // dominate the result. Better to return nothing (falls through to
+          // the next resolver) than a wrong price for a rarely-traded ticker.
+          if (candidates.length < 3) return;
 
-          // Pick the pair with the deepest liquidity to avoid scam-pool prices.
-          // Require at least $5K liquidity to filter wash-trading / honeypots.
-          const best = candidates
-            .filter((p) => (p.liquidity?.usd ?? 0) >= 5_000)
-            .sort(
-              (a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0),
-            )[0];
-          if (!best) return;
-
-          const v = best.priceUsd ? parseFloat(best.priceUsd) : NaN;
-          // Same sanity guard as the by-address resolver: no token is worth
-          // over $1M; values that large are oracle manipulation.
-          if (!Number.isFinite(v) || v <= 0 || v >= 1_000_000) return;
+          // Use the MEDIAN price across all qualifying pools instead of just
+          // the highest-liquidity one. A single scam/mirror pool can report
+          // a fabricated liquidity number large enough to win a "pick the
+          // deepest" comparison even after the trusted-chain filter (seen
+          // with a fake ARCH pool reporting billions in liquidity on a real
+          // chain id). The median is immune to one such outlier as long as
+          // it isn't the majority of matches.
+          const prices = candidates
+            .map((p) => parseFloat(p.priceUsd!))
+            .sort((a, b) => a - b);
+          const mid = Math.floor(prices.length / 2);
+          const v =
+            prices.length % 2 === 0
+              ? (prices[mid - 1] + prices[mid]) / 2
+              : prices[mid];
+          const best = candidates.reduce((closest, p) =>
+            Math.abs(parseFloat(p.priceUsd!) - v) <
+            Math.abs(parseFloat(closest.priceUsd!) - v)
+              ? p
+              : closest,
+          );
           out[sym] = {
             priceUsd: v,
             change24h:
