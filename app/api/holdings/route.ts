@@ -138,12 +138,29 @@ export async function POST(request: Request) {
     }
   }
 
-  // Process wallets serially to avoid hammering Alchemy / CoinGecko in
-  // parallel — when the user has many wallets, simultaneous bursts caused
-  // partial price fetches and left some holdings with null prices.
-  const results: WalletHoldings[] = [];
-  for (const w of wallets as WalletRow[]) {
-    results.push(await fetchForWallet(w));
+  // Process wallets with BOUNDED concurrency instead of one-at-a-time.
+  // The old fully-serial loop was the #1 cause of "refresh takes a minute"
+  // complaints — N wallets × 5-15s each (each wallet already fans out to
+  // 28+ EVM chains in parallel internally, see fetchEvmHoldings) adds up
+  // fast in series. A small concurrency cap keeps most of the speedup
+  // without reintroducing the original "parallel bursts starve shared
+  // rate limits (Alchemy/CoinGecko/CMC)" problem that serial processing
+  // was added to avoid.
+  const WALLET_CONCURRENCY = 4;
+  const results: WalletHoldings[] = new Array(wallets.length);
+  {
+    const list = wallets as WalletRow[];
+    let cursor = 0;
+    async function pump(): Promise<void> {
+      while (true) {
+        const i = cursor++;
+        if (i >= list.length) return;
+        results[i] = await fetchForWallet(list[i]);
+      }
+    }
+    await Promise.all(
+      Array.from({ length: Math.min(WALLET_CONCURRENCY, list.length) }, () => pump()),
+    );
   }
 
   // Persist to cache: delete previous rows, insert fresh ones in one round trip.
