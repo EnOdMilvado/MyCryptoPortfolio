@@ -211,17 +211,20 @@ interface PriceInfo {
 }
 
 /**
- * Price lookup, in order: CMC (by symbol, when we already know it and a key
- * is configured) → Alchemy Prices → CoinGecko → DexScreener.
+ * Price lookup, in order: Alchemy Prices (by-CONTRACT) → CoinGecko
+ * (by-CONTRACT) → CMC (by SYMBOL) → DexScreener (by-CONTRACT, consensus).
  * Returns USD price + 24h % change (when available) per lowercased contract.
  *
- * CMC goes first for tokens with a known symbol because it disambiguates by
- * real market-cap rank, not DEX-pool liquidity — immune to the fake-pool
- * class of bug DexScreener is vulnerable to (a single manipulated pool
- * reporting a fabricated liquidity figure, e.g. MOG priced at $12,101 or
- * ZRX at $62,181 on a real chain, vs. every other pool agreeing on the
- * true price). `symbolByContract` is optional — callers that don't have
- * metadata yet simply skip this tier and fall through to the others.
+ * Contract-address lookups go first because they are unambiguous by
+ * construction — there is exactly one token at a given address. CMC is
+ * queried by SYMBOL, which is fundamentally ambiguous: many unrelated
+ * tokens share a ticker (confirmed real case — TRU resolves to "Truebit",
+ * a completely different project, when TrueFi's TRU is the one actually
+ * held; same class of bug as the DexScreener fake-pool issue, just via a
+ * different source). So CMC is now a same-symbol FALLBACK for contracts
+ * the address-based sources don't know about, not the primary source.
+ * `symbolByContract` is optional — callers that don't have metadata yet
+ * simply skip the CMC tier and rely on DexScreener.
  */
 async function resolveTokenPrices(
   chain: EvmChain,
@@ -231,10 +234,28 @@ async function resolveTokenPrices(
   if (contracts.length === 0) return {};
   const merged: Record<string, PriceInfo> = {};
 
-  // 1) CoinMarketCap by symbol, when we know the symbol and CMC is enabled.
-  if (symbolByContract && isCmcEnabled()) {
+  // 1) Alchemy Prices (by contract address) — price only (no 24h change).
+  const alchemy = await getAlchemyTokenPrices(chain, contracts);
+  for (const k of Object.keys(alchemy)) {
+    merged[k] = { usd: alchemy[k], change24h: null };
+  }
+
+  // 2) CoinGecko (by contract address) for any still-missing.
+  const missingAfterAlchemy = contracts.filter((c) => merged[c] == null);
+  if (missingAfterAlchemy.length > 0) {
+    const cg = await getTokenPricesWithChange(chain, missingAfterAlchemy);
+    for (const k of Object.keys(cg)) {
+      if (merged[k] == null) merged[k] = cg[k];
+    }
+  }
+
+  // 3) CoinMarketCap by symbol — fallback only, for contracts neither
+  //    address-based source above resolved. Symbol lookups are ambiguous
+  //    (see doc comment), so this must never override an address-based hit.
+  const missingAfterCg = contracts.filter((c) => merged[c] == null);
+  if (symbolByContract && isCmcEnabled() && missingAfterCg.length > 0) {
     const symToContracts: Record<string, string[]> = {};
-    for (const c of contracts) {
+    for (const c of missingAfterCg) {
       const sym = symbolByContract[c];
       if (sym) (symToContracts[sym.toUpperCase()] ??= []).push(c);
     }
@@ -244,27 +265,9 @@ async function resolveTokenPrices(
       for (const sym of Object.keys(cmc)) {
         const q = cmc[sym];
         for (const c of symToContracts[sym] ?? []) {
-          merged[c] = { usd: q.priceUsd, change24h: q.change24h };
+          if (merged[c] == null) merged[c] = { usd: q.priceUsd, change24h: q.change24h };
         }
       }
-    }
-  }
-
-  // 2) Alchemy Prices — price only (no 24h change available).
-  const missingAfterCmc = contracts.filter((c) => merged[c] == null);
-  if (missingAfterCmc.length > 0) {
-    const alchemy = await getAlchemyTokenPrices(chain, missingAfterCmc);
-    for (const k of Object.keys(alchemy)) {
-      if (merged[k] == null) merged[k] = { usd: alchemy[k], change24h: null };
-    }
-  }
-
-  // 3) CoinGecko for any still-missing (with 24h change).
-  const missingAfterAlchemy = contracts.filter((c) => merged[c] == null);
-  if (missingAfterAlchemy.length > 0) {
-    const cg = await getTokenPricesWithChange(chain, missingAfterAlchemy);
-    for (const k of Object.keys(cg)) {
-      if (merged[k] == null) merged[k] = cg[k];
     }
   }
 
