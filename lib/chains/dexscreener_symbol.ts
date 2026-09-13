@@ -39,6 +39,8 @@ function shouldSkip(symbol: string): boolean {
   return false;
 }
 
+import { resolveByConsensus } from "./price-consensus";
+
 // Only trust pairs on chains we actually recognize/support elsewhere in the
 // app. DexScreener's /search endpoint indexes dozens of long-tail/novelty
 // "chains" (seen in the wild: "robinhood", tokenized-stock wrapper DEXes)
@@ -91,24 +93,17 @@ export async function getDexScreenerPricesBySymbol(
             const baseSym = (p.baseToken?.symbol ?? "").toUpperCase();
             if (baseSym !== sym) return false;
             if (!TRUSTED_CHAIN_IDS.has((p.chainId ?? "").toLowerCase())) return false;
-            if ((p.liquidity?.usd ?? 0) < 5_000) return false; // wash-trade/honeypot floor
             const v = p.priceUsd ? parseFloat(p.priceUsd) : NaN;
             return Number.isFinite(v) && v > 0 && v < 1_000_000;
           });
           if (candidates.length === 0) return;
 
-          // CRITICAL: group by CONTRACT ADDRESS first, not just symbol.
-          // Search-by-symbol frequently returns pools for several UNRELATED
-          // tokens that merely share a ticker (e.g. "WEN" matches the real
-          // Solana WEN at WENWENvqq... AND several totally different meme
-          // coins on other contracts that also self-labeled "WEN"). Taking
-          // a median across candidates from DIFFERENT contracts silently
-          // blends unrelated tokens' prices into a meaningless number. The
-          // fix: pick the single contract address with the highest total
-          // liquidity across its own pools (the token actually trading at
-          // real volume), THEN take the median of just that contract's
-          // pools to guard against one manipulated pool within it (the
-          // ARCH/MOG/ZRX class of bug).
+          // Group by CONTRACT ADDRESS first, not just symbol. Search-by-
+          // symbol frequently returns pools for several UNRELATED tokens
+          // that merely share a ticker (e.g. "WEN" matches the real Solana
+          // WEN at WENWENvqq... AND totally different meme coins on other
+          // contracts). Blending prices across different contracts would be
+          // meaningless, so each contract is resolved independently below.
           const byAddr: Record<string, DsSearchPair[]> = {};
           for (const p of candidates) {
             const addr = (p.baseToken?.address ?? "").toLowerCase();
@@ -117,45 +112,35 @@ export async function getDexScreenerPricesBySymbol(
           }
           const addrs = Object.keys(byAddr);
           if (addrs.length === 0) return;
-          const totalLiq = (addr: string) =>
-            byAddr[addr].reduce((s, p) => s + (p.liquidity?.usd ?? 0), 0);
-          const winningAddr = addrs.reduce((a, b) => (totalLiq(b) > totalLiq(a) ? b : a));
-          const winningPools = byAddr[winningAddr];
 
-          // Require at least 3 qualifying pools for THIS specific contract
-          // before trusting a median — with only 1-2, a single
-          // manipulated/thin pool can still dominate the result. Fall back
-          // to the single/best pool directly when there are fewer.
-          let v: number;
-          let best: DsSearchPair;
-          if (winningPools.length < 3) {
-            best = winningPools.reduce((a, b) =>
-              (b.liquidity?.usd ?? 0) > (a.liquidity?.usd ?? 0) ? b : a,
+          // For each contract, resolve via liquidity-INDEPENDENT consensus
+          // (see price-consensus.ts) instead of picking/weighting by
+          // liquidity, which is attacker-controlled and has repeatedly been
+          // faked into the hundreds of millions to make a single scam pool
+          // dominate (confirmed on ARCH, MOG, ZRX, TRU, LRC). Then, when
+          // MULTIPLE contracts share this symbol, pick the contract whose
+          // consensus has the most agreeing pools (again pool COUNT, not
+          // liquidity) — that's the real, actively-traded token.
+          let bestConsensus: { price: number; change24h: number | null; poolCount: number; chain: string } | null = null;
+          for (const addr of addrs) {
+            const pools = byAddr[addr];
+            const consensus = resolveByConsensus(
+              pools.map((p) => ({
+                price: parseFloat(p.priceUsd!),
+                change24h: typeof p.priceChange?.h24 === "number" ? p.priceChange.h24 : null,
+                liquidityUsd: p.liquidity?.usd ?? 0,
+              })),
             );
-            v = parseFloat(best.priceUsd!);
-          } else {
-            const prices = winningPools
-              .map((p) => parseFloat(p.priceUsd!))
-              .sort((a, b) => a - b);
-            const mid = Math.floor(prices.length / 2);
-            v =
-              prices.length % 2 === 0
-                ? (prices[mid - 1] + prices[mid]) / 2
-                : prices[mid];
-            best = winningPools.reduce((closest, p) =>
-              Math.abs(parseFloat(p.priceUsd!) - v) <
-              Math.abs(parseFloat(closest.priceUsd!) - v)
-                ? p
-                : closest,
-            );
+            if (!consensus) continue;
+            if (!bestConsensus || consensus.poolCount > bestConsensus.poolCount) {
+              bestConsensus = { ...consensus, chain: pools[0].chainId };
+            }
           }
+          if (!bestConsensus) return;
           out[sym] = {
-            priceUsd: v,
-            change24h:
-              typeof best.priceChange?.h24 === "number"
-                ? best.priceChange.h24
-                : null,
-            source: { chain: best.chainId },
+            priceUsd: bestConsensus.price,
+            change24h: bestConsensus.change24h,
+            source: { chain: bestConsensus.chain },
           };
         } catch {
           // swallow — non-fatal
