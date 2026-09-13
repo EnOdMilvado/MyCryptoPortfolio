@@ -392,8 +392,7 @@ export function AggregatedHoldingsTable({
             <col className="w-[8%] sm:w-[4%]" />
             <col className="w-[40%] sm:w-[14%]" />
             <col className="hidden sm:table-column sm:w-[10%]" />
-            <col className="hidden sm:table-column sm:w-[8%]" />
-            <col className="hidden sm:table-column sm:w-[10%]" />
+            <col className="w-[18%] sm:w-[8%]" />
             <col className="w-[30%] sm:w-[12%]" />
             {pnl && <col className="hidden sm:table-column sm:w-[10%]" />}
             {pnl && <col className="hidden sm:table-column sm:w-[10%]" />}
@@ -435,7 +434,7 @@ export function AggregatedHoldingsTable({
                   onClick={() => toggleSort("change24h")}
                 />
               </th>
-              <th className="hidden sm:table-cell px-2 py-2.5 text-left">
+              <th className="px-2 py-2.5 text-left">
                 <SortHeader
                   label="Amount"
                   active={sortKey === "totalAmount"}
@@ -590,8 +589,8 @@ export function AggregatedHoldingsTable({
                         </span>
                       )}
                     </td>
-                    {/* Amount */}
-                    <td className="hidden sm:table-cell px-2 py-2.5 align-middle text-left tabular text-sm whitespace-nowrap">
+                    {/* Amount — always visible (before USD), even on mobile. */}
+                    <td className="px-2 py-2.5 align-middle text-left tabular text-sm whitespace-nowrap">
                       {formatAmount(r.totalAmount)}
                     </td>
                     {/* USD */}
