@@ -37,6 +37,24 @@ function key(): string | null {
   return process.env.CMC_API_KEY || null;
 }
 
+// Short-lived in-process cache. A single wallet refresh calls
+// getCmcQuotes once per EVM chain (28+ calls) plus once for Solana/native
+// lookups, and it's common for the same well-known symbols (ETH, USDT,
+// USDC, WBTC, ...) to repeat across many of those calls within the same
+// request. Without this, each repeat re-hits the network AND burns one of
+// CMC's 333 free-tier calls/day for data we already have. 20s is short
+// enough to never serve meaningfully stale prices but long enough to
+// cover one full multi-chain wallet refresh.
+const CACHE_TTL_MS = 20_000;
+const cache = new Map<string, { quote: CmcQuote; at: number }>();
+
+function getCached(sym: string): CmcQuote | null {
+  const hit = cache.get(sym);
+  if (!hit) return null;
+  if (Date.now() - hit.at > CACHE_TTL_MS) return null;
+  return hit.quote;
+}
+
 /**
  * Fetch USD price + 24h change for the given symbols. Symbols that
  * resolve to multiple CMC coins (ambiguous tickers) are disambiguated
@@ -49,10 +67,16 @@ export async function getCmcQuotes(
 ): Promise<Record<string, CmcQuote>> {
   const apiKey = key();
   if (!apiKey || symbols.length === 0) return {};
-  const unique = Array.from(
+  const requested = Array.from(
     new Set(symbols.map((s) => s.toUpperCase()).filter(Boolean)),
   );
   const out: Record<string, CmcQuote> = {};
+  for (const sym of requested) {
+    const cached = getCached(sym);
+    if (cached) out[sym] = cached;
+  }
+  const unique = requested.filter((s) => out[s] == null);
+  if (unique.length === 0) return out;
   // CMC quotes/latest accepts up to ~100 symbols per call; chunk just to
   // stay well under any URL-length surprise.
   for (let i = 0; i < unique.length; i += 80) {
@@ -104,13 +128,16 @@ export async function getCmcQuotes(
       if (!best) continue;
       const usd = best.quote?.USD;
       if (!usd || typeof usd.price !== "number") continue;
-      out[sym.toUpperCase()] = {
+      const upper = sym.toUpperCase();
+      const q: CmcQuote = {
         priceUsd: usd.price,
         change24h:
           typeof usd.percent_change_24h === "number"
             ? usd.percent_change_24h
             : null,
       };
+      out[upper] = q;
+      cache.set(upper, { quote: q, at: Date.now() });
     }
   }
   return out;
