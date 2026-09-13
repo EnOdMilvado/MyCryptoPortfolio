@@ -23,7 +23,7 @@ export function NavBar({
           </Link>
           <Link
             href="/research"
-            className="hidden sm:inline text-sm font-semibold text-text-muted hover:text-primary transition whitespace-nowrap"
+            className="text-sm font-semibold text-text-muted hover:text-primary transition whitespace-nowrap"
           >
             Research
           </Link>

@@ -31,6 +31,7 @@ import { SortableSectionsLayout, type PageSection } from "./SortableSectionsLayo
 import { WalletsTable } from "./WalletsTable";
 import type { HoldingRow } from "./HoldingsTable";
 import { HiddenHoldingsPanel } from "./HiddenHoldingsPanel";
+import { ResearchHighlightsCard } from "./research/ResearchHighlightsCard";
 import { useExchangeAssetExcludes } from "./exchange/useExchangeAssetExcludes";
 import type { ReactNode } from "react";
 
@@ -562,6 +563,11 @@ function DashboardSections({
   );
 
   const sections: PageSection[] = [];
+  sections.push({
+    id: "research-highlights",
+    label: "Research",
+    node: <ResearchHighlightsCard />,
+  });
   sections.push({
     id: "change-cards",
     label: "Changes",
