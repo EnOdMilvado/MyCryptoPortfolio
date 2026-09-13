@@ -17,20 +17,32 @@ interface PriceInfo {
   change24h: number | null;
 }
 
-// symbolByMint is optional metadata (from the Jupiter token list) that lets
-// CMC-by-symbol run first for tokens with a known ticker. See evm.ts's
-// resolveTokenPrices for the full rationale: CMC disambiguates by real
-// market-cap rank, immune to the fake-pool class of bug DexScreener is
-// vulnerable to (a single manipulated pool with fabricated liquidity).
+// symbolByMint is optional metadata (from the Jupiter token list). CMC is
+// queried by SYMBOL, which is fundamentally ambiguous — unrelated tokens
+// can and do share a ticker (confirmed real case: EVM's TRU resolved to
+// "Truebit" instead of the held "TrueFi" via CMC-by-symbol; same failure
+// mode applies here). So contract/mint-address lookups (Alchemy, CoinGecko,
+// DexScreener-by-mint) go FIRST since a mint address is unambiguous by
+// construction, and CMC-by-symbol is only a fallback for mints none of
+// those recognize.
 async function resolveSolanaTokenPrices(
   mints: string[],
   symbolByMint?: Record<string, string>,
 ): Promise<Record<string, PriceInfo>> {
   if (mints.length === 0) return {};
   const merged: Record<string, PriceInfo> = {};
-  if (symbolByMint && isCmcEnabled()) {
+  const alchemy = await getAlchemyTokenPrices("solana", mints);
+  for (const k of Object.keys(alchemy))
+    if (merged[k] == null) merged[k] = { usd: alchemy[k], change24h: null };
+  const missing1 = mints.filter((m) => merged[m.toLowerCase()] == null);
+  if (missing1.length > 0) {
+    const cg = await getTokenPricesWithChange("solana", missing1);
+    for (const k of Object.keys(cg)) if (merged[k] == null) merged[k] = cg[k];
+  }
+  const missingBeforeCmc = mints.filter((m) => merged[m.toLowerCase()] == null);
+  if (symbolByMint && isCmcEnabled() && missingBeforeCmc.length > 0) {
     const symToMints: Record<string, string[]> = {};
-    for (const m of mints) {
+    for (const m of missingBeforeCmc) {
       const sym = symbolByMint[m.toLowerCase()];
       if (sym) (symToMints[sym.toUpperCase()] ??= []).push(m.toLowerCase());
     }
@@ -40,19 +52,10 @@ async function resolveSolanaTokenPrices(
       for (const sym of Object.keys(cmc)) {
         const q = cmc[sym];
         for (const m of symToMints[sym] ?? []) {
-          merged[m] = { usd: q.priceUsd, change24h: q.change24h };
+          if (merged[m] == null) merged[m] = { usd: q.priceUsd, change24h: q.change24h };
         }
       }
     }
-  }
-  const missingBeforeAlchemy = mints.filter((m) => merged[m.toLowerCase()] == null);
-  const alchemy = await getAlchemyTokenPrices("solana", missingBeforeAlchemy);
-  for (const k of Object.keys(alchemy))
-    if (merged[k] == null) merged[k] = { usd: alchemy[k], change24h: null };
-  const missing1 = mints.filter((m) => merged[m.toLowerCase()] == null);
-  if (missing1.length > 0) {
-    const cg = await getTokenPricesWithChange("solana", missing1);
-    for (const k of Object.keys(cg)) if (merged[k] == null) merged[k] = cg[k];
   }
   const missing2 = mints.filter((m) => merged[m.toLowerCase()] == null);
   if (missing2.length > 0) {
