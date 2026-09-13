@@ -14,12 +14,20 @@ export function NavBar({
   return (
     <nav className="sticky top-0 z-40 backdrop-blur-md bg-bg/70 border-b border-border">
       <div className="max-w-6xl mx-auto px-3 sm:px-6 py-2.5 sm:py-3 flex items-center justify-between gap-2 sm:gap-3">
-        <Link
-          href="/dashboard"
-          className="text-base sm:text-xl font-extrabold tracking-tight text-text truncate"
-        >
-          MyCryptoPortfolio
-        </Link>
+        <div className="flex items-center gap-4 min-w-0">
+          <Link
+            href="/dashboard"
+            className="text-base sm:text-xl font-extrabold tracking-tight text-text truncate"
+          >
+            MyCryptoPortfolio
+          </Link>
+          <Link
+            href="/research"
+            className="hidden sm:inline text-sm font-semibold text-text-muted hover:text-primary transition whitespace-nowrap"
+          >
+            Research
+          </Link>
+        </div>
         <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
           <ThemeSwitcher />
           <HideBalanceToggle />
