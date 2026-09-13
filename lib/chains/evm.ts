@@ -8,9 +8,23 @@ import {
   type Holding,
 } from "./types";
 import {
+  getNativePrices,
   getNativePricesWithChange,
   getTokenPricesWithChange,
 } from "./prices";
+
+/**
+ * Hand-curated map of lowercased contract address → CoinGecko coin id,
+ * for tokens with a CONFIRMED symbol collision on CoinMarketCap (i.e. a
+ * different, unrelated project shares the same ticker on CMC). Add an
+ * entry here whenever a new collision is found in production — this is
+ * a targeted patch, not meant to replace the general resolver chain.
+ */
+const KNOWN_COLLISION_CONTRACT_TO_CG_ID: Record<string, string> = {
+  // TRU: TrueFi (real, held by users) vs. "Truebit" (unrelated project),
+  // both ticker TRU on CMC.
+  "0x4c19596f5aaff459fa38b0f7ed92f11ae6543784": "truefi",
+};
 import {
   getAlchemyPricesBySymbol,
   getAlchemyTokenPrices,
@@ -246,6 +260,31 @@ async function resolveTokenPrices(
     const cg = await getTokenPricesWithChange(chain, missingAfterAlchemy);
     for (const k of Object.keys(cg)) {
       if (merged[k] == null) merged[k] = cg[k];
+    }
+  }
+
+  // 2.5) Hand-curated CoinGecko-by-ID pin for contracts with a KNOWN
+  //      symbol collision on CMC. CoinGecko's free tier occasionally
+  //      429s from shared Vercel IPs, which was silently falling through
+  //      to the CMC-by-symbol fallback below — and CMC lists an unrelated
+  //      "Truebit" project under the same TRU ticker as TrueFi, producing
+  //      a wildly wrong price. Pinning the exact CoinGecko coin id by
+  //      contract address (only for chain=="ethereum", where this map's
+  //      addresses live) sidesteps both the rate-limit AND the collision
+  //      in one shot, with one extra retry baked in via getNativePrices.
+  const missingAfterCgId = contracts.filter((c) => merged[c] == null);
+  if (chain === "ethereum" && missingAfterCgId.length > 0) {
+    const idsToTry: { contract: string; id: string }[] = [];
+    for (const c of missingAfterCgId) {
+      const id = KNOWN_COLLISION_CONTRACT_TO_CG_ID[c];
+      if (id) idsToTry.push({ contract: c, id });
+    }
+    if (idsToTry.length > 0) {
+      const prices = await getNativePrices(idsToTry.map((x) => x.id));
+      for (const { contract, id } of idsToTry) {
+        const p = prices[id];
+        if (p != null) merged[contract] = { usd: p, change24h: null };
+      }
     }
   }
 
