@@ -51,7 +51,14 @@ export function ChangeCards({ snapshots }: ChangeCardsProps) {
   }
 
   const latest = sorted[sorted.length - 1] ?? null;
-  const now = latest ? new Date(latest.capturedAt).getTime() : Date.now();
+  // Anchor the 24h window to the REAL current time, not the latest
+  // snapshot's timestamp. Using the snapshot's own time as "now" meant a
+  // dashboard left open without a fresh refresh would freeze this card on
+  // the exact same % / $ figure indefinitely, since the window never
+  // moved forward. Real wall-clock time keeps the window sliding even
+  // between refreshes; the underlying data is still only as fresh as the
+  // latest snapshot, but the percentage itself won't visibly get "stuck".
+  const now = Date.now();
 
   return (
     <section className="grid grid-cols-2 lg:grid-cols-4 gap-4 animate-fade-up">

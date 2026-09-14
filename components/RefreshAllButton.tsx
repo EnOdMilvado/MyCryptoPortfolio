@@ -37,6 +37,12 @@ const PARALLEL_LIMIT = 8;
 // since prices/balances can be minutes-to-hours stale from the last visit.
 const AUTO_REFRESH_KEY = "crypto-last-auto-refresh";
 const AUTO_REFRESH_MIN_GAP_MS = 2 * 60 * 1000; // don't auto-refresh more than once every 2 min
+// How often to re-check whether an auto-refresh is due while the tab stays
+// open. Deliberately longer than AUTO_REFRESH_MIN_GAP_MS (which is the
+// dedupe floor shared with the mount-time trigger) so a long-lived tab
+// doesn't hammer every wallet/exchange API every 2 minutes — 10 min keeps
+// snapshots (and the 24h change card) fresh without being aggressive.
+const AUTO_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 
 export function RefreshAllButton({
   walletIds,
@@ -198,23 +204,43 @@ export function RefreshAllButton({
     }
   }
 
-  // Auto-refresh once per mount when the dashboard loads, so the user
-  // always sees a fresh sync of every wallet (all chains) + every exchange
+  // Auto-refresh on mount when the dashboard loads, so the user always
+  // sees a fresh sync of every wallet (all chains) + every exchange
   // without needing to click "Refresh all" manually. Throttled via
   // localStorage so switching tabs/pages within the same short window
   // doesn't re-trigger a full resync repeatedly.
+  //
+  // ALSO re-runs on an interval (AUTO_REFRESH_MIN_GAP_MS) as long as the
+  // tab stays open. Without this, a dashboard left open for hours never
+  // records a new portfolio snapshot after the first load, which froze
+  // the 24h change card ("-1.78% / -$11,105.86") on stale data indefinitely
+  // — the card's "now" is anchored to the latest snapshot's timestamp, so
+  // no new snapshot meant no new "now" and the same frozen number forever.
   useEffect(() => {
-    if (autoRanRef.current) return;
     if (walletIds.length === 0) return;
-    autoRanRef.current = true;
-    try {
-      const last = Number(window.localStorage.getItem(AUTO_REFRESH_KEY) ?? "0");
-      if (Date.now() - last < AUTO_REFRESH_MIN_GAP_MS) return;
-      window.localStorage.setItem(AUTO_REFRESH_KEY, String(Date.now()));
-    } catch {
-      // localStorage unavailable (e.g. private mode) — still safe to run once.
+
+    function maybeRefresh() {
+      try {
+        const last = Number(window.localStorage.getItem(AUTO_REFRESH_KEY) ?? "0");
+        if (Date.now() - last < AUTO_REFRESH_MIN_GAP_MS) return;
+        window.localStorage.setItem(AUTO_REFRESH_KEY, String(Date.now()));
+      } catch {
+        // localStorage unavailable (e.g. private mode) — still safe to run.
+      }
+      void refresh();
     }
-    void refresh();
+
+    if (!autoRanRef.current) {
+      autoRanRef.current = true;
+      maybeRefresh();
+    }
+
+    // Re-check every AUTO_REFRESH_MIN_GAP_MS while the tab is open. The
+    // localStorage throttle above still gates the actual network burst,
+    // so this just makes sure a long-lived tab eventually fires it again
+    // instead of only ever running once at mount.
+    const interval = window.setInterval(maybeRefresh, AUTO_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walletIds.length]);
 

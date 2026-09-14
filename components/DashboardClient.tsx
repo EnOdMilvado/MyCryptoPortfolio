@@ -682,7 +682,11 @@ function DashboardHeader({
     );
     const latest = sorted[sorted.length - 1];
     if (!latest) return null;
-    const now = new Date(latest.capturedAt).getTime();
+    // Anchor to real wall-clock time, not the latest snapshot's own
+    // timestamp — same fix as ChangeCards.tsx, otherwise this header
+    // figure freezes whenever the tab goes a while without a fresh
+    // refresh/snapshot.
+    const now = Date.now();
     const cutoff = now - 24 * 60 * 60 * 1000;
     const inWindow = sorted.filter(
       (s) => new Date(s.capturedAt).getTime() >= cutoff,
