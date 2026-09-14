@@ -5,6 +5,7 @@ import Link from "next/link";
 import { SummaryHeader } from "./SummaryHeader";
 import { PortfolioCard, type PortfolioSummary } from "./PortfolioCard";
 import { AddPortfolioDialog } from "./AddPortfolioDialog";
+import { AddWalletDialog } from "./AddWalletDialog";
 import {
   AllHoldingsProvider,
   AllHoldingsOverview,
@@ -307,6 +308,8 @@ export function DashboardClient({
         btcPriceUsd={btcPriceUsd}
         allWalletIds={allWalletIds}
         oldestFetchedAt={oldestFetchedAt}
+        snapshots={snapshots}
+        firstPortfolioId={portfolios[0]?.id ?? null}
       />
 
       {portfolioSummaries.length === 0 ? (
@@ -643,6 +646,8 @@ function DashboardHeader({
   btcPriceUsd,
   allWalletIds,
   oldestFetchedAt,
+  snapshots,
+  firstPortfolioId,
 }: {
   email: string;
   excludedPortfolios: Set<string>;
@@ -650,6 +655,12 @@ function DashboardHeader({
   btcPriceUsd: number | null;
   allWalletIds: string[];
   oldestFetchedAt: string | null;
+  snapshots: Snapshot[];
+  /** Target portfolio for the header's "+ Wallet" quick-add button — the
+   *  first portfolio in the user's list (order-independent since a wallet
+   *  can be moved between portfolios later). Null when the user has no
+   *  portfolio yet, in which case the button is hidden. */
+  firstPortfolioId: string | null;
 }) {
   const { includedRows, cleanRows, hydrated } = useAllHoldings();
   // Pre-hydration the excluded set isn't loaded yet, so render the
@@ -658,6 +669,39 @@ function DashboardHeader({
   const totalUsd = effectiveRows.reduce((s, r) => s + r.valueUsd, 0);
   const totalBtc = btcPriceUsd ? totalUsd / btcPriceUsd : 0;
   const perHoldingExcluded = Math.max(cleanRows.length - includedRows.length, 0);
+
+  // 24h % change of the total portfolio value, from snapshot history.
+  // Baseline = earliest snapshot within the last 24h window (or, if none
+  // fall inside it, the last snapshot before the window). Null until we
+  // have at least one usable baseline. Same windowing logic as ChangeCards.
+  const changePct24h = useMemo<number | null>(() => {
+    if (snapshots.length === 0) return null;
+    const sorted = [...snapshots].sort(
+      (a, b) =>
+        new Date(a.capturedAt).getTime() - new Date(b.capturedAt).getTime(),
+    );
+    const latest = sorted[sorted.length - 1];
+    if (!latest) return null;
+    const now = new Date(latest.capturedAt).getTime();
+    const cutoff = now - 24 * 60 * 60 * 1000;
+    const inWindow = sorted.filter(
+      (s) => new Date(s.capturedAt).getTime() >= cutoff,
+    );
+    let baseline: Snapshot | null = null;
+    if (
+      inWindow.length > 0 &&
+      new Date(inWindow[0].capturedAt).getTime() <= cutoff + (24 * 60 * 60 * 1000) / 4
+    ) {
+      baseline = inWindow[0];
+    } else {
+      const before = sorted.filter(
+        (s) => new Date(s.capturedAt).getTime() < cutoff,
+      );
+      if (before.length > 0) baseline = before[before.length - 1];
+    }
+    if (!baseline || baseline.totalUsd <= 0) return null;
+    return ((latest.totalUsd - baseline.totalUsd) / baseline.totalUsd) * 100;
+  }, [snapshots]);
 
   // Top gainers for the header widget: positive-only, ranked by 24h %
   // gain, take top 9. Aggregated per-symbol so multi-chain assets count
@@ -716,17 +760,24 @@ function DashboardHeader({
       }
       totalUsd={totalUsd}
       totalBtc={totalBtc}
+      changePct24h={changePct24h}
       middleSlot={<HeaderHighlights topGainers={topGainers} />}
       extra={
-        <div className="flex flex-col items-stretch gap-1.5 w-36">
+        <div className="flex flex-row flex-wrap items-center gap-2">
           {allWalletIds.length > 0 && (
             <RefreshAllButton
               walletIds={allWalletIds}
               lastFetchedAt={oldestFetchedAt}
-              compact
+              inlineRow
             />
           )}
-          <AddPortfolioDialog triggerClassName="btn-primary text-xs !px-3 !py-1.5 w-full" />
+          <AddPortfolioDialog triggerClassName="btn-ghost text-xs !px-3 !py-1.5" />
+          {firstPortfolioId && (
+            <AddWalletDialog
+              portfolioId={firstPortfolioId}
+              triggerClassName="btn-primary text-xs !px-3 !py-1.5"
+            />
+          )}
         </div>
       }
     />

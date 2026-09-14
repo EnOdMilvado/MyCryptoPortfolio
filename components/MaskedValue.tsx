@@ -1,7 +1,7 @@
 "use client";
 
 import { useHideBalance } from "./HideBalanceProvider";
-import { formatBtc, formatHoldingUsd, formatUsd } from "@/lib/format";
+import { formatBtc, formatHoldingUsd, formatUsd, formatUsdWhole } from "@/lib/format";
 
 const MASK = "••••";
 
@@ -10,15 +10,24 @@ export function UsdValue({
   value,
   priceUsd,
   className,
+  whole,
 }: {
   value: number | null | undefined;
   /** When passed, "—" is shown instead of "$0.00" if priceUsd is null. */
   priceUsd?: number | null;
   className?: string;
+  /** Render as a whole-dollar figure with no cents (e.g. "$2,031,471")
+   *  instead of the default 2-decimal format. Used by the dashboard
+   *  header total per Or's request — full number, no abbreviation, no
+   *  cents noise. */
+  whole?: boolean;
 }) {
   const { hidden } = useHideBalance();
-  const text =
-    priceUsd !== undefined ? formatHoldingUsd(value, priceUsd) : formatUsd(value);
+  const text = whole
+    ? formatUsdWhole(value)
+    : priceUsd !== undefined
+      ? formatHoldingUsd(value, priceUsd)
+      : formatUsd(value);
   return <span className={className}>{hidden ? MASK : text}</span>;
 }
 

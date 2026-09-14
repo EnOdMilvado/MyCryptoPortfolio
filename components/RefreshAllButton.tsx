@@ -12,6 +12,11 @@ interface Props {
    *  "Refresh all" and "+ New portfolio" buttons all line up at the
    *  same width one above the other). Default: side-by-side. */
   compact?: boolean;
+  /** Render ONLY a single compact "Refresh All" button (no "24h fill"
+   *  secondary button, no stacked column) so it sits inline in a
+   *  horizontal header button row alongside "+ Portfolio" / "+ Wallet".
+   *  The status/last-refreshed line renders beneath as a full-width note. */
+  inlineRow?: boolean;
 }
 
 // One wallet per request — keeps every /api/holdings call well under
@@ -33,7 +38,12 @@ const PARALLEL_LIMIT = 8;
 const AUTO_REFRESH_KEY = "crypto-last-auto-refresh";
 const AUTO_REFRESH_MIN_GAP_MS = 2 * 60 * 1000; // don't auto-refresh more than once every 2 min
 
-export function RefreshAllButton({ walletIds, lastFetchedAt, compact = false }: Props) {
+export function RefreshAllButton({
+  walletIds,
+  lastFetchedAt,
+  compact = false,
+  inlineRow = false,
+}: Props) {
   const router = useRouter();
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
@@ -233,6 +243,49 @@ export function RefreshAllButton({ walletIds, lastFetchedAt, compact = false }: 
   const btnBase = compact
     ? "btn-ghost text-xs !px-3 !py-1.5 w-full"
     : "btn-ghost";
+
+  // Inline-row mode: a single compact "Refresh All" button that lines up
+  // horizontally with "+ Portfolio" / "+ Wallet" in the header. The
+  // last-refreshed / error status renders as a small full-width line
+  // beneath the whole button row (so it doesn't widen the row itself).
+  if (inlineRow) {
+    return (
+      <button
+        type="button"
+        onClick={refresh}
+        disabled={running || walletIds.length === 0}
+        className={`btn-ghost text-xs !px-3 !py-1.5 inline-flex items-center gap-1.5 ${
+          isStale && !running ? "ring-2 ring-primary/40" : ""
+        }`}
+        title={
+          walletIds.length === 0
+            ? "Add a wallet first"
+            : error
+              ? error
+              : `${statusLabel} · Refresh ${walletIds.length} wallets`
+        }
+      >
+        <svg
+          width={14}
+          height={14}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          className={running ? "animate-spin" : ""}
+        >
+          <path d="M21 12a9 9 0 1 1-3-6.7" />
+          <polyline points="21 4 21 10 15 10" />
+        </svg>
+        {running && progress
+          ? `Refreshing ${progress.done}/${progress.total}…`
+          : "Refresh All"}
+      </button>
+    );
+  }
 
   return (
     <div className={wrapClass}>

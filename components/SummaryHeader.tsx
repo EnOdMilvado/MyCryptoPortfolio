@@ -8,6 +8,7 @@ export function SummaryHeader({
   subtitle,
   totalUsd,
   totalBtc,
+  changePct24h,
   middleSlot,
   extra,
 }: {
@@ -15,6 +16,10 @@ export function SummaryHeader({
   subtitle?: React.ReactNode;
   totalUsd: number;
   totalBtc: number;
+  /** Signed 24h % change of totalUsd, shown inline next to the total
+   *  (e.g. "▴ 2.4%" in green, or "▾ 1.1%" in red). Omitted entirely when
+   *  null (not enough snapshot history yet). */
+  changePct24h?: number | null;
   /** Optional widget that sits between the totals (left) and the action
    *  buttons (right). Hidden on mobile via `hidden md:flex` in the slot
    *  itself — the header on small screens stays simple. */
@@ -33,8 +38,18 @@ export function SummaryHeader({
           <div className="mt-1 flex flex-wrap items-end gap-2 sm:gap-3">
             <UsdValue
               value={totalUsd}
+              whole
               className="text-3xl sm:text-4xl font-extrabold tabular text-text whitespace-nowrap"
             />
+            {changePct24h != null && (
+              <span
+                className={`text-sm sm:text-base font-bold tabular whitespace-nowrap ${
+                  changePct24h >= 0 ? "text-success" : "text-danger"
+                }`}
+              >
+                {changePct24h >= 0 ? "▴" : "▾"} {Math.abs(changePct24h).toFixed(1)}%
+              </span>
+            )}
             <button
               type="button"
               onClick={toggle}

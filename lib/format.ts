@@ -38,6 +38,20 @@ const btcFormatter = new Intl.NumberFormat("en-US", {
 const amountSmall = new Intl.NumberFormat("en-US", { maximumFractionDigits: 6 });
 const amountLarge = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
 
+// Whole-dollar USD formatter (no cents) with thousands separators, e.g.
+// "$2,031,471" — used for the dashboard header total per Or's request to
+// show the full figure (not abbreviated to $2.03M) without noisy cents.
+const usdWholeFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  maximumFractionDigits: 0,
+});
+
+export function formatUsdWhole(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return usdWholeFormatter.format(value);
+}
+
 export function formatUsd(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return "—";
   const abs = Math.abs(value);

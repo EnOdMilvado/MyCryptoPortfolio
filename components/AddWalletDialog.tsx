@@ -20,7 +20,15 @@ const CHAIN_LABELS: Record<ChainType, string> = {
   theta: "Theta",
 };
 
-export function AddWalletDialog({ portfolioId }: { portfolioId: string }) {
+export function AddWalletDialog({
+  portfolioId,
+  triggerClassName,
+}: {
+  portfolioId: string;
+  /** Override the trigger button classes (e.g. to match a compact header
+   *  button row). Default: btn-primary "+ New wallet". */
+  triggerClassName?: string;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
@@ -65,8 +73,12 @@ export function AddWalletDialog({ portfolioId }: { portfolioId: string }) {
 
   return (
     <>
-      <button type="button" className="btn-primary" onClick={() => setOpen(true)}>
-        + New wallet
+      <button
+        type="button"
+        className={triggerClassName ?? "btn-primary"}
+        onClick={() => setOpen(true)}
+      >
+        + Wallet
       </button>
       <Modal open={open} onClose={() => setOpen(false)} title="New wallet">
         <form onSubmit={submit} className="space-y-4">
