@@ -49,71 +49,14 @@ export function ResearchHighlightsCard() {
         <span className="text-xs text-primary">Open →</span>
       </div>
 
-      {/* Data packed on the LEFT, Fear & Greed pinned to the RIGHT (per
-          Or's latest spec) so the card fills its width instead of leaving
-          ~40% empty. On mobile it stacks: metrics first, gauge below. */}
-      <div className="grid gap-3 lg:grid-cols-[1fr_190px]">
-        <div className="flex flex-col gap-2">
-          <div className="grid gap-2 sm:grid-cols-3">
-            <div className="rounded-lg border border-border/60 p-2">
-              <p className="text-[10px] uppercase tracking-wide text-text-muted">Altcoin Season</p>
-              {data?.altcoinSeason ? (
-                <>
-                  <div className="mt-0.5 flex items-baseline gap-1">
-                    <span className="text-lg font-extrabold tabular leading-none">{data.altcoinSeason.value}</span>
-                    <span className="text-xs text-text-muted">/100</span>
-                  </div>
-                  <p className="text-[11px] font-semibold text-text-muted">{data.altcoinSeason.label}</p>
-                  <AltSeasonBar score={data.altcoinSeason.value} />
-                </>
-              ) : (
-                <p className="py-2 text-xs text-text-muted">{loading ? "…" : "—"}</p>
-              )}
-            </div>
-
-            <div className="rounded-lg border border-border/60 p-2">
-              <p className="text-[10px] uppercase tracking-wide text-text-muted">BTC Dominance</p>
-              <p className="mt-0.5 text-lg font-semibold">
-                {loading ? "…" : data?.btcDominance != null ? `${data.btcDominance.toFixed(2)}%` : "—"}
-              </p>
-            </div>
-
-            <div className="rounded-lg border border-border/60 p-2">
-              <p className="text-[10px] uppercase tracking-wide text-text-muted">Total Mkt Cap</p>
-              <p className="mt-0.5 text-lg font-semibold leading-none">
-                {loading
-                  ? "…"
-                  : data?.totalMarketCapUsd != null
-                    ? formatUsdCompact(data.totalMarketCapUsd)
-                    : "—"}
-              </p>
-              {mcapChange != null && (
-                <span className={`text-[11px] font-semibold ${mcapChange >= 0 ? "text-success" : "text-danger"}`}>
-                  {mcapChange >= 0 ? "+" : ""}
-                  {mcapChange.toFixed(2)}% (24h)
-                </span>
-              )}
-            </div>
-          </div>
-
-          {topHot.length > 0 && (
-            <p className="truncate text-xs text-text-muted">
-              Hot tokens lagging this week: {" "}
-              {topHot.map((t, i) => (
-                <span key={t.symbol}>
-                  {i > 0 && ", "}
-                  <span className="font-semibold text-text">{t.symbol}</span>{" "}
-                  {t.change7dPct != null && <span className="text-danger">{t.change7dPct.toFixed(1)}%</span>}
-                </span>
-              ))}
-            </p>
-          )}
-        </div>
-
-        <div className="flex flex-col items-center justify-center rounded-xl border border-border/60 p-2">
+      {/* Layout per Or's spec: Fear & Greed gauge on TOP (centered),
+          then BTC Dominance + Total Mkt Cap side-by-side in the MIDDLE,
+          then Altcoin Season on the BOTTOM. Hot-tokens line last. */}
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-col items-center rounded-xl border border-border/60 p-2">
           <p className="text-[10px] uppercase tracking-wide text-text-muted">Fear &amp; Greed</p>
           {data?.sentiment ? (
-            <div className="flex w-full flex-col items-center">
+            <div className="flex flex-col items-center">
               <FearGreedGauge score={data.sentiment.value} />
               <div className="-mt-3 text-xl font-extrabold tabular leading-none">
                 {data.sentiment.value}
@@ -126,6 +69,61 @@ export function ResearchHighlightsCard() {
             <p className="py-6 text-xs text-text-muted">{loading ? "…" : "—"}</p>
           )}
         </div>
+
+        <div className="grid gap-2 grid-cols-2">
+          <div className="rounded-lg border border-border/60 p-2">
+            <p className="text-[10px] uppercase tracking-wide text-text-muted">BTC Dominance</p>
+            <p className="mt-0.5 text-lg font-semibold">
+              {loading ? "…" : data?.btcDominance != null ? `${data.btcDominance.toFixed(2)}%` : "—"}
+            </p>
+          </div>
+
+          <div className="rounded-lg border border-border/60 p-2">
+            <p className="text-[10px] uppercase tracking-wide text-text-muted">Total Mkt Cap</p>
+            <p className="mt-0.5 text-lg font-semibold leading-none">
+              {loading
+                ? "…"
+                : data?.totalMarketCapUsd != null
+                  ? formatUsdCompact(data.totalMarketCapUsd)
+                  : "—"}
+            </p>
+            {mcapChange != null && (
+              <span className={`text-[11px] font-semibold ${mcapChange >= 0 ? "text-success" : "text-danger"}`}>
+                {mcapChange >= 0 ? "+" : ""}
+                {mcapChange.toFixed(2)}% (24h)
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-border/60 p-2">
+          <p className="text-[10px] uppercase tracking-wide text-text-muted">Altcoin Season</p>
+          {data?.altcoinSeason ? (
+            <>
+              <div className="mt-0.5 flex items-baseline gap-1">
+                <span className="text-lg font-extrabold tabular leading-none">{data.altcoinSeason.value}</span>
+                <span className="text-xs text-text-muted">/100</span>
+                <span className="ml-1 text-[11px] font-semibold text-text-muted">{data.altcoinSeason.label}</span>
+              </div>
+              <AltSeasonBar score={data.altcoinSeason.value} />
+            </>
+          ) : (
+            <p className="py-2 text-xs text-text-muted">{loading ? "…" : "—"}</p>
+          )}
+        </div>
+
+        {topHot.length > 0 && (
+          <p className="truncate text-xs text-text-muted">
+            Hot tokens lagging this week: {" "}
+            {topHot.map((t, i) => (
+              <span key={t.symbol}>
+                {i > 0 && ", "}
+                <span className="font-semibold text-text">{t.symbol}</span>{" "}
+                {t.change7dPct != null && <span className="text-danger">{t.change7dPct.toFixed(1)}%</span>}
+              </span>
+            ))}
+          </p>
+        )}
       </div>
     </Link>
   );
