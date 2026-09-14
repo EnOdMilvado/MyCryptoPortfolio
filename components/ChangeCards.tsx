@@ -5,9 +5,7 @@ import { useHideBalance } from "./HideBalanceProvider";
 import { useAllHoldings } from "./AllHoldingsView";
 import { resolveCoinColor, CHART_COLORS, OTHER_COLOR } from "./PieChart";
 import { useTheme } from "./ThemeProvider";
-import { SentimentCards } from "./SentimentCards";
 import { formatUsd } from "@/lib/format";
-import type { FearGreed, AltcoinSeason } from "@/lib/market/sentiment";
 
 export interface Snapshot {
   capturedAt: string;
@@ -31,15 +29,13 @@ const PERIODS: Period[] = [
 
 interface ChangeCardsProps {
   snapshots: Snapshot[];
-  fearGreed?: FearGreed | null;
-  altcoinSeason?: AltcoinSeason | null;
 }
 
-export function ChangeCards({
-  snapshots,
-  fearGreed = null,
-  altcoinSeason = null,
-}: ChangeCardsProps) {
+// Fear & Greed / Altcoin Season now live only in the unified Research
+// highlights card (components/research/ResearchHighlightsCard.tsx) to
+// avoid showing the same two gauges twice on the dashboard. This
+// component keeps the 24h change card + allocation donut.
+export function ChangeCards({ snapshots }: ChangeCardsProps) {
   const { hidden } = useHideBalance();
   const sorted = useMemo(
     () =>
@@ -50,10 +46,7 @@ export function ChangeCards({
     [snapshots],
   );
 
-  // Show the row even when we have no snapshots — the sentiment cards
-  // don't depend on user data and should always render so the layout
-  // doesn't collapse on first-load.
-  if (sorted.length === 0 && fearGreed == null && altcoinSeason == null) {
+  if (sorted.length === 0) {
     return null;
   }
 
@@ -131,8 +124,6 @@ export function ChangeCards({
           </div>
         );
       })}
-
-      <SentimentCards fearGreed={fearGreed} altcoinSeason={altcoinSeason} />
 
       <AllocationDonutCard />
     </section>
