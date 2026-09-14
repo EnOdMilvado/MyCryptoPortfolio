@@ -311,11 +311,7 @@ export function DashboardClient({
 
       {portfolioSummaries.length === 0 ? (
         <>
-          <ChangeCards
-            snapshots={snapshots}
-            fearGreed={fearGreed}
-            altcoinSeason={altcoinSeason}
-          />
+          <ChangeCards snapshots={snapshots} />
           <div className="card text-center animate-fade-up">
             <p className="text-text-muted">No portfolios yet. Let&apos;s create your first one!</p>
             <div className="mt-4">
@@ -571,13 +567,7 @@ function DashboardSections({
   sections.push({
     id: "change-cards",
     label: "Changes",
-    node: (
-      <ChangeCards
-        snapshots={snapshots}
-        fearGreed={fearGreed}
-        altcoinSeason={altcoinSeason}
-      />
-    ),
+    node: <ChangeCards snapshots={snapshots} />,
   });
   if (includedHoldings.length > 0) {
     sections.push({

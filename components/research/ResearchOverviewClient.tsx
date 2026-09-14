@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { formatUsd } from "@/lib/format";
+import { formatUsd, formatUsdCompact } from "@/lib/format";
+import { FearGreedGauge, AltSeasonBar } from "@/components/SentimentCards";
 
 interface HotToken {
   id: string;
@@ -31,6 +32,7 @@ interface OverviewResponse {
   altcoinSeason: { value: number; label: string } | null;
   btcDominance: number | null;
   totalMarketCapUsd: number | null;
+  marketCapChange24hPct: number | null;
   hotTokens: HotToken[];
   recommendations: Recommendation[];
   fetchedAt: string;
@@ -99,23 +101,59 @@ export function ResearchOverviewClient() {
   return (
     <>
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <Tile
-          label="Fear & Greed"
-          value={data?.sentiment ? `${data.sentiment.value}` : loading ? "…" : "—"}
-          sub={data?.sentiment?.label}
-        />
-        <Tile
-          label="Altcoin Season"
-          value={data?.altcoinSeason ? `${data.altcoinSeason.value}` : loading ? "…" : "—"}
-          sub={data?.altcoinSeason?.label}
-        />
+        <div className="card flex flex-col items-center p-4">
+          <p className="text-xs uppercase tracking-wide text-text-muted">Fear &amp; Greed</p>
+          {data?.sentiment ? (
+            <>
+              <FearGreedGauge score={data.sentiment.value} />
+              <div className="-mt-3 text-2xl font-extrabold tabular leading-none">
+                {data.sentiment.value}
+              </div>
+              <div className="mt-0.5 text-[11px] font-semibold text-text-muted">
+                {data.sentiment.label}
+              </div>
+            </>
+          ) : (
+            <div className="py-6 text-2xl font-semibold text-text-muted">{loading ? "…" : "—"}</div>
+          )}
+        </div>
+        <div className="card flex flex-col justify-center p-4">
+          <p className="text-xs uppercase tracking-wide text-text-muted">Altcoin Season</p>
+          {data?.altcoinSeason ? (
+            <>
+              <div className="mt-2 flex items-baseline gap-1">
+                <span className="text-2xl font-extrabold tabular leading-none">
+                  {data.altcoinSeason.value}
+                </span>
+                <span className="text-sm text-text-muted">/100</span>
+                <span className="ml-auto text-[11px] font-semibold text-text-muted">
+                  {data.altcoinSeason.label}
+                </span>
+              </div>
+              <AltSeasonBar score={data.altcoinSeason.value} />
+              <div className="flex justify-between text-[10px] font-medium text-text-muted">
+                <span>Bitcoin</span>
+                <span>Altcoin</span>
+              </div>
+            </>
+          ) : (
+            <div className="py-6 text-2xl font-semibold text-text-muted">{loading ? "…" : "—"}</div>
+          )}
+        </div>
         <Tile
           label="BTC Dominance"
-          value={data?.btcDominance != null ? `${data.btcDominance.toFixed(1)}%` : loading ? "…" : "—"}
+          value={data?.btcDominance != null ? `${data.btcDominance.toFixed(2)}%` : loading ? "…" : "—"}
         />
         <Tile
           label="Total Market Cap"
-          value={data?.totalMarketCapUsd != null ? formatUsd(data.totalMarketCapUsd) : loading ? "…" : "—"}
+          value={
+            data?.totalMarketCapUsd != null ? formatUsdCompact(data.totalMarketCapUsd) : loading ? "…" : "—"
+          }
+          sub={
+            data?.marketCapChange24hPct != null
+              ? `${data.marketCapChange24hPct >= 0 ? "+" : ""}${data.marketCapChange24hPct.toFixed(2)}% (24h)`
+              : undefined
+          }
         />
       </section>
 
@@ -158,11 +196,11 @@ export function ResearchOverviewClient() {
           </div>
         </div>
         <div className="mt-4 overflow-hidden rounded-lg border border-border">
-          <div className="grid grid-cols-5 bg-surface-alt px-4 py-3 text-xs font-medium uppercase tracking-wide text-text-muted">
+          <div className="grid grid-cols-5 gap-2 bg-surface-alt px-4 py-3 text-xs font-medium uppercase tracking-wide text-text-muted">
             <span className="col-span-2">Token</span>
-            <span>Price</span>
-            <span>24h</span>
-            <span>7d</span>
+            <span className="text-right">Price</span>
+            <span className="text-right">24h</span>
+            <span className="text-right">7d</span>
           </div>
           {loading ? (
             <div className="px-4 py-10 text-center text-sm text-text-muted">Loading…</div>
@@ -174,16 +212,22 @@ export function ResearchOverviewClient() {
             filteredHotTokens.map((t) => (
               <div
                 key={t.id}
-                className="grid grid-cols-5 items-center border-t border-border px-4 py-2.5 text-sm"
+                className="grid grid-cols-5 items-center gap-2 border-t border-border px-4 py-3 text-sm"
               >
                 <div className="col-span-2 flex items-center gap-2 truncate">
                   <span className="text-xs text-text-muted">#{t.rank}</span>
                   <span className="font-semibold">{t.symbol}</span>
                   <span className="truncate text-text-muted">{t.name}</span>
                 </div>
-                <span className="tabular">{formatUsd(t.priceUsd)}</span>
-                <ChangeBadge pct={t.change24hPct} />
-                <ChangeBadge pct={t.change7dPct} />
+                <span className="tabular text-right text-base font-medium">
+                  {formatUsd(t.priceUsd)}
+                </span>
+                <span className="text-right text-base">
+                  <ChangeBadge pct={t.change24hPct} />
+                </span>
+                <span className="text-right text-base">
+                  <ChangeBadge pct={t.change7dPct} />
+                </span>
               </div>
             ))
           )}

@@ -9,6 +9,7 @@ interface CgGlobalResponse {
   data?: {
     market_cap_percentage?: { btc?: number };
     total_market_cap?: { usd?: number };
+    market_cap_change_percentage_24h_usd?: number;
   };
 }
 
@@ -24,19 +25,24 @@ interface CgMarketRow {
   price_change_percentage_7d_in_currency?: number | null;
 }
 
-async function getGlobalStats(): Promise<{ btcDominance: number | null; totalMarketCapUsd: number | null }> {
+async function getGlobalStats(): Promise<{
+  btcDominance: number | null;
+  totalMarketCapUsd: number | null;
+  marketCapChange24hPct: number | null;
+}> {
   try {
     const res = await fetch("https://api.coingecko.com/api/v3/global", {
       next: { revalidate: 300 },
     });
-    if (!res.ok) return { btcDominance: null, totalMarketCapUsd: null };
+    if (!res.ok) return { btcDominance: null, totalMarketCapUsd: null, marketCapChange24hPct: null };
     const json = (await res.json()) as CgGlobalResponse;
     return {
       btcDominance: json.data?.market_cap_percentage?.btc ?? null,
       totalMarketCapUsd: json.data?.total_market_cap?.usd ?? null,
+      marketCapChange24hPct: json.data?.market_cap_change_percentage_24h_usd ?? null,
     };
   } catch {
-    return { btcDominance: null, totalMarketCapUsd: null };
+    return { btcDominance: null, totalMarketCapUsd: null, marketCapChange24hPct: null };
   }
 }
 
@@ -141,6 +147,7 @@ export async function GET() {
     altcoinSeason: sentiment.altcoinSeason,
     btcDominance: global.btcDominance,
     totalMarketCapUsd: global.totalMarketCapUsd,
+    marketCapChange24hPct: global.marketCapChange24hPct,
     hotTokens,
     recommendations,
     fetchedAt: new Date().toISOString(),
