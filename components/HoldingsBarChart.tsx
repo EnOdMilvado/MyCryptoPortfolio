@@ -61,15 +61,42 @@ export function HoldingsBarChart({
   const { dark } = useTheme();
 
   const bars = useMemo(() => {
-    const sorted = [...data].sort((a, b) => b.value - a.value);
-    const top = sorted.filter((d) => d.value > 0).slice(0, topN);
-    const total = top.reduce((s, d) => s + d.value, 0);
-    const maxValue = top.reduce((m, d) => Math.max(m, d.value), 0);
-    return top.map((d, i) => {
+    const positive = data.filter((d) => d.value > 0);
+    const sorted = [...positive].sort((a, b) => b.value - a.value);
+    const top = sorted.slice(0, topN);
+    // % is relative to the GRAND total across every holding, not just the
+    // ones shown — otherwise the visible bars' percentages always summed
+    // to 100% on their own, silently hiding how much of the portfolio the
+    // long tail actually represents. An explicit "Other" bar below makes
+    // up the difference so the full set always adds to 100%.
+    const grandTotal = positive.reduce((s, d) => s + d.value, 0);
+    const shownTotal = top.reduce((s, d) => s + d.value, 0);
+    const otherValue = Math.max(grandTotal - shownTotal, 0);
+    const rest = sorted.slice(topN);
+
+    const withOther: (BarDatum & { isOther?: boolean })[] =
+      otherValue > 0
+        ? [
+            ...top,
+            {
+              label: "Other",
+              symbol: null,
+              value: otherValue,
+              key: undefined,
+              isOther: true,
+            } as BarDatum & { isOther: boolean },
+          ]
+        : top;
+
+    const maxValue = withOther.reduce((m, d) => Math.max(m, d.value), 0);
+    return withOther.map((d, i) => {
+      const isOther = (d as { isOther?: boolean }).isOther === true;
       const symKey = (d.symbol ?? d.label).trim().toUpperCase();
-      const brand = resolveCoinColor(symKey, dark);
-      const color = brand ?? CHART_COLORS[i % CHART_COLORS.length];
-      const pct = total > 0 ? (d.value / total) * 100 : 0;
+      const brand = isOther ? null : resolveCoinColor(symKey, dark);
+      const color = isOther
+        ? "rgb(var(--text-muted) / 0.35)"
+        : brand ?? CHART_COLORS[i % CHART_COLORS.length];
+      const pct = grandTotal > 0 ? (d.value / grandTotal) * 100 : 0;
       // Bars use 6px min height so the tiny ones stay visible.
       const heightPct = maxValue > 0 ? (d.value / maxValue) * 100 : 0;
       return {
@@ -77,6 +104,8 @@ export function HoldingsBarChart({
         color,
         pct,
         heightPct: Math.max(heightPct, 2),
+        isOther,
+        otherCount: isOther ? rest.length : undefined,
       };
     });
   }, [data, topN, dark]);
@@ -105,7 +134,9 @@ export function HoldingsBarChart({
               ? b.value / btcPriceUsd
               : null;
           const clickable = onBarClick && b.key;
-          const tooltip = `${b.label} · ${formatUsd(b.value)}${
+          const otherSuffix =
+            b.isOther && b.otherCount ? ` (${b.otherCount} more asset${b.otherCount === 1 ? "" : "s"})` : "";
+          const tooltip = `${b.label}${otherSuffix} · ${formatUsd(b.value)}${
             btcEquiv != null ? ` · ${formatBtc(btcEquiv)}` : ""
           } · ${b.pct.toFixed(1)}%${clickable ? " — click to see wallets" : ""}`;
           return (
