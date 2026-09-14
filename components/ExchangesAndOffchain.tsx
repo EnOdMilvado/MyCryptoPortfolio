@@ -7,10 +7,8 @@ import { supabaseBrowser } from "@/lib/supabase/browser";
 import { AddExchangeDialog } from "./AddExchangeDialog";
 import { AddOffchainBalanceDialog } from "./AddOffchainBalanceDialog";
 import { UsdValue } from "./MaskedValue";
-import { HoldingsTable, type HoldingRow } from "./HoldingsTable";
 import { useExcludedIds } from "./exchange/useExcludedIds";
-import { formatRelative } from "@/lib/format";
-import type { ChainId } from "@/lib/chains/types";
+import { formatRelative, formatAmount } from "@/lib/format";
 
 export interface ExchangeRow {
   id: string;
@@ -81,16 +79,6 @@ export interface OffchainRow {
   amount: number;
   /** Best-effort USD value (for non-USD currencies we leave as raw amount). */
   valueUsd: number;
-}
-
-/** Tight USD label that fits inside a per-asset chip ($1.2K / $4.5M). */
-function compactUsd(v: number): string {
-  if (!Number.isFinite(v) || v <= 0) return "0";
-  if (v >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(2)}B`;
-  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`;
-  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
-  if (v >= 1) return v.toFixed(2);
-  return v.toFixed(2);
 }
 
 const KIND_LABEL: Record<string, string> = {
@@ -249,7 +237,6 @@ export function ExchangesAndOffchain({
               <ExchangeRowItem
                 key={ex.id}
                 ex={ex}
-                btcPriceUsd={btcPriceUsd}
                 refreshing={refreshing}
                 onRefresh={() => refresh(ex.id)}
                 onRemove={() => removeExchange(ex.id)}
@@ -310,126 +297,65 @@ export function ExchangesAndOffchain({
 /* -------------------- per-exchange expandable row -------------------- */
 
 /**
- * One exchange in the dashboard card. Clicking the row toggles an inline
- * holdings table (all spot balances) right below it; a separate "Open ↗"
- * link still navigates to the full exchange page. Each asset has a checkbox
- * that excludes it from totals — wired to the same
- * `excluded-exchange-assets:{id}` localStorage set the exchange-detail page
- * uses, so unchecking drops the asset from this card's total AND the main
- * dashboard tables/charts (they listen for the storage event).
+ * One exchange in the dashboard card. Compact-by-design (per Or's spec):
+ * shows the exchange name + total, then ONLY the top 4 holdings by value
+ * as clean `SYMBOL  amount  $value` rows. There is no inline
+ * expand-to-full-list anymore — to see every asset (and toggle per-asset
+ * excludes) the user clicks "Open ↗" to the full exchange page. This keeps
+ * the dashboard scannable instead of rendering a long scroll per exchange.
+ *
+ * The card total still respects the per-asset excludes stored under
+ * `excluded-exchange-assets:{id}` (managed on the detail page) so numbers
+ * stay consistent with the rest of the dashboard.
  */
 function ExchangeRowItem({
   ex,
-  btcPriceUsd,
   refreshing,
   onRefresh,
   onRemove,
 }: {
   ex: ExchangeRow;
-  btcPriceUsd: number | null;
   refreshing: string | null;
   onRefresh: () => void;
   onRemove: () => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const { excluded, toggle } = useExcludedIds(`excluded-exchange-assets:${ex.id}`);
+  const { excluded } = useExcludedIds(`excluded-exchange-assets:${ex.id}`);
 
   const adjusted = ex.balances.reduce(
     (s, b) => (excluded.has(b.asset.toUpperCase()) ? s : s + b.valueUsd),
     0,
   );
 
-  const topChips = [...ex.balances]
+  // Top 4 holdings by value (excluding user-hidden assets). Each renders
+  // as a clean row with amount + USD value.
+  const topHoldings = [...ex.balances]
     .filter((b) => b.valueUsd > 0 && !excluded.has(b.asset.toUpperCase()))
     .sort((a, b) => b.valueUsd - a.valueUsd)
     .slice(0, 4);
 
-  // Synthesize HoldingRows so we can reuse HoldingsTable (sorting, dust
-  // filter, per-row include checkbox) for the inline asset list.
-  const rows: HoldingRow[] = ex.balances
-    .filter((b) => b.amount > 0 || b.valueUsd > 0)
-    .map((b) => ({
-      walletId: `exchange:${ex.id}`,
-      walletName: ex.label,
-      walletAddress: "",
-      portfolioId: undefined,
-      portfolioName: ex.provider.toUpperCase(),
-      chain: "exchange" as ChainId,
-      contract: `${ex.id}:${b.asset.toUpperCase()}`,
-      symbol: b.asset,
-      name: b.asset,
-      amount: b.amount,
-      priceUsd: b.priceUsd,
-      valueUsd: b.valueUsd,
-      priceChange24h: b.priceChange24h,
-      exchangeId: ex.id,
-    }));
-
-  const includedAssetKeys = new Set(
-    rows
-      .map((r) => (r.symbol ?? "").toUpperCase())
-      .filter((a) => !excluded.has(a)),
-  );
+  const includedCount = ex.balances.filter(
+    (b) => (b.amount > 0 || b.valueUsd > 0) && !excluded.has(b.asset.toUpperCase()),
+  ).length;
+  const moreCount = Math.max(includedCount - topHoldings.length, 0);
 
   return (
     <li className="rounded-xl border border-border bg-surface-2/40 transition hover:border-primary/50">
-      <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-2">
-        <button
-          type="button"
-          onClick={() => setOpen((o) => !o)}
-          className="group min-w-0 flex-1 text-left"
-          aria-expanded={open}
-        >
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className={`shrink-0 text-text-muted transition-transform ${open ? "rotate-180" : ""}`}
-              aria-hidden
-            >
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-            <span className="font-semibold text-text group-hover:text-primary">
-              {ex.label}
-            </span>
-            <span className="pill">{ex.provider}</span>
-            {topChips.length > 0 && (
-              <span className="inline-flex flex-wrap items-center gap-1.5">
-                {topChips.map((b) => (
-                  <span
-                    key={b.asset}
-                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-text bg-surface-2 px-1.5 py-0.5 rounded"
-                    title={`${b.asset} · $${b.valueUsd.toFixed(2)}`}
-                  >
-                    {b.asset}
-                    <span className="text-text-muted font-normal tabular">
-                      ${compactUsd(b.valueUsd)}
-                    </span>
-                  </span>
-                ))}
-              </span>
-            )}
-          </div>
-          <div className="text-xs text-text-muted mt-0.5 pl-[22px]">
-            {ex.balanceCount} {ex.balanceCount === 1 ? "asset" : "assets"}
-            {ex.lastSyncedAt
-              ? ` · synced ${formatRelative(ex.lastSyncedAt)}`
-              : " · never synced"}
-            {" · "}
-            {open ? "click to collapse" : "click to expand"}
-          </div>
-        </button>
+      {/* Header: name + provider on the left, total + actions on the right */}
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-3 py-2">
+        <div className="min-w-0 flex items-center gap-2">
+          <Link
+            href={`/dashboard/exchange/${ex.id}`}
+            className="font-semibold text-text hover:text-primary"
+          >
+            {ex.label}
+          </Link>
+          <span className="pill">{ex.provider}</span>
+        </div>
         <div className="flex items-center gap-3 tabular shrink-0">
           <UsdValue
             value={adjusted}
             priceUsd={adjusted > 0 ? 1 : null}
-            className="font-semibold"
+            className="font-bold text-base"
           />
           <Link
             href={`/dashboard/exchange/${ex.id}`}
@@ -455,27 +381,45 @@ function ExchangeRowItem({
         </div>
       </div>
 
-      {open && (
-        <div className="px-3 pb-3 pt-1 border-t border-border">
-          {rows.length === 0 ? (
-            <p className="text-sm text-text-muted py-4 text-center">
-              No spot balances cached yet — press Refresh.
-            </p>
-          ) : (
-            <HoldingsTable
-              rows={rows}
-              btcPriceUsd={btcPriceUsd}
-              groupColumn="network"
-              selectable={{
-                getKey: (r) => (r.symbol ?? "").toUpperCase(),
-                checked: includedAssetKeys,
-                onToggle: (k) => toggle(k),
-                header: "Incl",
-                ariaLabel: "Include this asset in totals",
-              }}
-            />
-          )}
+      {/* Top 4 holdings as clean rows: SYMBOL | amount | $value */}
+      {topHoldings.length > 0 ? (
+        <div className="px-3 pb-2">
+          <ul className="divide-y divide-border/60">
+            {topHoldings.map((b) => (
+              <li
+                key={b.asset}
+                className="flex items-center justify-between gap-3 py-1.5"
+              >
+                <span className="font-semibold text-text w-16 shrink-0">{b.asset}</span>
+                <span className="flex-1 text-right tabular text-sm text-text-muted">
+                  {formatAmount(b.amount)}
+                </span>
+                <span className="w-24 text-right tabular text-sm font-semibold text-text">
+                  <UsdValue value={b.valueUsd} priceUsd={b.valueUsd > 0 ? 1 : null} />
+                </span>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-1 flex items-center justify-between text-xs text-text-muted">
+            <span>
+              {moreCount > 0 ? (
+                <Link
+                  href={`/dashboard/exchange/${ex.id}`}
+                  className="text-primary hover:text-primary-hover"
+                >
+                  +{moreCount} more — open to see all
+                </Link>
+              ) : (
+                `${includedCount} ${includedCount === 1 ? "asset" : "assets"}`
+              )}
+            </span>
+            {ex.lastSyncedAt && <span>synced {formatRelative(ex.lastSyncedAt)}</span>}
+          </div>
         </div>
+      ) : (
+        <p className="px-3 pb-2 text-sm text-text-muted">
+          No spot balances cached yet — press Refresh.
+        </p>
       )}
     </li>
   );
