@@ -388,20 +388,28 @@ export function AggregatedHoldingsTable({
           {/* 10 columns when showBtc, 9 otherwise:
               Include / Asset / Price / 24h / Amount / USD / [BTC] / % / Wallets / Address / CMC */}
           <colgroup>
+            {/* MUST have exactly one <col> per <th>/<td> column below, in
+                the same order — including columns hidden on mobile via
+                "hidden sm:table-cell". A missing <col> here previously
+                caused the whole colgroup to be off-by-one (Price AND 24h
+                are both hidden-on-mobile header cells, but there was only
+                ONE matching hidden <col> before Amount), which made
+                Mobile Safari misalign/overlap the Amount + USD columns. */}
             {hideable && <col className="w-[8%] sm:w-[4%]" />}
-            <col className="w-[8%] sm:w-[4%]" />
-            <col className="w-[40%] sm:w-[14%]" />
-            <col className="hidden sm:table-column sm:w-[10%]" />
-            <col className="w-[18%] sm:w-[8%]" />
-            <col className="w-[30%] sm:w-[12%]" />
+            <col className="w-[8%] sm:w-[4%]" /> {/* Include */}
+            <col className="w-[40%] sm:w-[14%]" /> {/* Asset */}
+            <col className="hidden sm:table-column sm:w-[10%]" /> {/* Price */}
+            <col className="hidden sm:table-column sm:w-[10%]" /> {/* 24h */}
+            <col className="w-[18%] sm:w-[8%]" /> {/* Amount */}
+            <col className="w-[30%] sm:w-[12%]" /> {/* USD */}
             {pnl && <col className="hidden sm:table-column sm:w-[10%]" />}
             {pnl && <col className="hidden sm:table-column sm:w-[10%]" />}
             {pnl && <col className="w-[24%] sm:w-[11%]" />}
             {showBtc && <col className="hidden sm:table-column sm:w-[10%]" />}
-            <col className="hidden sm:table-column sm:w-[6%]" />
-            <col className="hidden sm:table-column sm:w-[6%]" />
-            <col className="hidden sm:table-column sm:w-[12%]" />
-            <col className="w-[22%] sm:w-[6%]" />
+            <col className="hidden sm:table-column sm:w-[6%]" /> {/* % */}
+            <col className="hidden sm:table-column sm:w-[6%]" /> {/* Wallets */}
+            <col className="hidden sm:table-column sm:w-[12%]" /> {/* Address */}
+            <col className="w-[22%] sm:w-[6%]" /> {/* CMC */}
           </colgroup>
           <thead className="bg-surface-2/80 text-text-muted sticky top-0 z-10 backdrop-blur-sm">
             <tr>
