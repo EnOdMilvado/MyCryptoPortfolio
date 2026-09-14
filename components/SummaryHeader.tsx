@@ -23,24 +23,24 @@ export function SummaryHeader({
 }) {
   const { hidden, toggle } = useHideBalance();
   return (
-    <section className="card relative overflow-hidden animate-fade-up p-4 sm:p-6">
-      <div className="absolute -top-20 -left-20 h-60 w-60 rounded-full bg-primary/15 blur-3xl" />
-      <div className="absolute -bottom-24 -right-24 h-72 w-72 rounded-full bg-accent/15 blur-3xl" />
-      <div className="relative flex flex-wrap items-end justify-between gap-4 sm:gap-6">
+    <section className="card relative overflow-hidden animate-fade-up px-4 py-3 sm:px-5 sm:py-4">
+      <div className="absolute -top-20 -left-20 h-56 w-56 rounded-full bg-primary/15 blur-3xl" />
+      <div className="absolute -bottom-24 -right-24 h-64 w-64 rounded-full bg-accent/15 blur-3xl" />
+      <div className="relative flex flex-wrap items-start justify-between gap-3 sm:gap-4">
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-text-muted">{title}</p>
-          {subtitle && <div className="text-xs text-text-muted/80 mt-0.5">{subtitle}</div>}
-          <div className="mt-2 flex items-center gap-2 sm:gap-3 flex-wrap">
+          <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">{title}</p>
+          {subtitle && <div className="text-[11px] text-text-muted/80 mt-0.5">{subtitle}</div>}
+          <div className="mt-1 flex flex-wrap items-end gap-2 sm:gap-3">
             <UsdValue
               value={totalUsd}
-              className="text-3xl sm:text-5xl font-extrabold tabular text-text break-all"
+              className="text-3xl sm:text-4xl font-extrabold tabular text-text whitespace-nowrap"
             />
             <button
               type="button"
               onClick={toggle}
               aria-label={hidden ? "Show balance" : "Hide balance"}
               title={hidden ? "Show balance" : "Hide balance"}
-              className="text-text-muted hover:text-text transition p-1 -mb-1 shrink-0"
+              className="text-text-muted hover:text-text transition p-1 -mb-0.5 shrink-0"
             >
               {hidden ? (
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -57,7 +57,7 @@ export function SummaryHeader({
           </div>
           <BtcValue
             value={totalBtc}
-            className="mt-1 block text-sm sm:text-lg text-text-muted tabular"
+            className="mt-0.5 block text-xs sm:text-sm text-text-muted tabular"
           />
         </div>
         {middleSlot}
