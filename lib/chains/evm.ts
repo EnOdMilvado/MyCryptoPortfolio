@@ -264,18 +264,18 @@ async function resolveTokenPrices(
   }
 
   // 2.5) Hand-curated CoinGecko-by-ID pin for contracts with a KNOWN
-  //      symbol collision on CMC. CoinGecko's free tier occasionally
-  //      429s from shared Vercel IPs, which was silently falling through
-  //      to the CMC-by-symbol fallback below — and CMC lists an unrelated
-  //      "Truebit" project under the same TRU ticker as TrueFi, producing
-  //      a wildly wrong price. Pinning the exact CoinGecko coin id by
-  //      contract address (only for chain=="ethereum", where this map's
-  //      addresses live) sidesteps both the rate-limit AND the collision
-  //      in one shot, with one extra retry baked in via getNativePrices.
-  const missingAfterCgId = contracts.filter((c) => merged[c] == null);
-  if (chain === "ethereum" && missingAfterCgId.length > 0) {
+  //      symbol collision / fake-pool problem. This runs for EVERY
+  //      contract in the collision map — not just ones still missing a
+  //      price — and its result ALWAYS OVERWRITES whatever earlier steps
+  //      found. These addresses are hand-verified to have a source that
+  //      can return a wildly wrong number (fake DexScreener pool, CMC
+  //      ticker collision, etc.), so "we already have *a* price" is not
+  //      good enough — we specifically want THIS price, unconditionally,
+  //      whenever CoinGecko-by-id itself succeeds. Falls back to whatever
+  //      the earlier steps found only if this lookup fails outright.
+  if (chain === "ethereum") {
     const idsToTry: { contract: string; id: string }[] = [];
-    for (const c of missingAfterCgId) {
+    for (const c of contracts) {
       const id = KNOWN_COLLISION_CONTRACT_TO_CG_ID[c];
       if (id) idsToTry.push({ contract: c, id });
     }
@@ -285,6 +285,15 @@ async function resolveTokenPrices(
         const p = prices[id];
         if (p != null) merged[contract] = { usd: p, change24h: null };
       }
+    }
+  }
+
+  // 2.6) Direct fallback pin for TRU TrueFi when the contract is known
+  //      but any earlier free-tier lookup path missed it.
+  if (chain === "ethereum" && merged["0x4c19596f5aaff459fa38b0f7ed92f11ae6543784"] == null) {
+    const tru = await getNativePrices(["truefi"]);
+    if (tru.truefi != null) {
+      merged["0x4c19596f5aaff459fa38b0f7ed92f11ae6543784"] = { usd: tru.truefi, change24h: null };
     }
   }
 

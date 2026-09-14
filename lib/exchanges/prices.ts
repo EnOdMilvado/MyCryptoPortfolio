@@ -154,6 +154,20 @@ const SYMBOL_TO_CG: Record<string, string> = {
   WSOL: "wrapped-solana",
   STETH: "staked-ether",
   WSTETH: "wrapped-steth",
+  // TRU collision guard: TrueFi (Ethereum) is the real token we want,
+  // not the unrelated CMC ticker match that can surface as Truebit.
+  TRU: "truefi",
+};
+
+/**
+ * Symbols with a CONFIRMED collision/fake-pool problem where we always
+ * want to hard-override every other resolver's result with CoinGecko's
+ * own coin-id lookup, rather than letting "first resolver to answer wins"
+ * pick a wrong number. Kept separate from SYMBOL_TO_CG (which is only a
+ * same-priority fallback source, not an override).
+ */
+const KNOWN_COLLISION_SYMBOL_TO_CG_ID: Record<string, string> = {
+  TRU: "truefi",
 };
 
 /**
@@ -249,6 +263,23 @@ export async function resolvePricesForSymbols(
       .catch(() => null),
   );
 
+  // Hard override for symbols with a KNOWN collision/fake-pool problem
+  // (see SYMBOL_TO_CG comments) — always wins over whatever the general
+  // resolvers above found, since those sources have demonstrated they can
+  // return a wildly wrong number for these specific tickers. Only applied
+  // when this lookup itself succeeds; otherwise the normal resolver order
+  // below still provides a fallback.
+  const collisionOverrides: Record<string, number> = {};
+  const collisionSymbols = wanted.filter((s) => s in KNOWN_COLLISION_SYMBOL_TO_CG_ID);
+  if (collisionSymbols.length > 0) {
+    const ids = collisionSymbols.map((s) => KNOWN_COLLISION_SYMBOL_TO_CG_ID[s]);
+    const cg = await getNativePrices(ids);
+    for (const s of collisionSymbols) {
+      const p = cg[KNOWN_COLLISION_SYMBOL_TO_CG_ID[s]];
+      if (isValidPrice(p)) collisionOverrides[s] = p;
+    }
+  }
+
   const results = await Promise.allSettled(resolvers);
   for (const r of results) {
     if (r.status !== "fulfilled" || !r.value) continue;
@@ -266,6 +297,10 @@ export async function resolvePricesForSymbols(
       const cached = lastKnownGoodPrice.get(sym);
       if (cached) out[sym] = cached.priceUsd;
     }
+  }
+  for (const [sym, price] of Object.entries(collisionOverrides)) {
+    out[sym] = price;
+    rememberPrice(sym, price, "collision-override");
   }
   return out;
 }
