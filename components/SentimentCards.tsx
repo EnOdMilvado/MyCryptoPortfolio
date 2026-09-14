@@ -67,7 +67,7 @@ function FearGreedCard({ value }: { value: FearGreed | null }) {
  * separate stroked arcs so each gets its own brand color. A small filled
  * knob marks the current score on the arc.
  */
-function FearGreedGauge({ score }: { score: number }) {
+export function FearGreedGauge({ score }: { score: number }) {
   // SVG geometry: half-arc spans 180° from (cx-r, cy) to (cx+r, cy).
   const width = 140;
   const height = 78;
@@ -175,7 +175,7 @@ function AltSeasonCard({ value }: { value: AltcoinSeason | null }) {
  * Knob marks the current score. Heights stay small so the card matches
  * the height of the F&G gauge card next to it.
  */
-function AltSeasonBar({ score }: { score: number }) {
+export function AltSeasonBar({ score }: { score: number }) {
   const width = 140;
   const height = 14;
   const radius = 4;

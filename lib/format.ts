@@ -4,6 +4,23 @@ const usdFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2,
 });
 
+/**
+ * Compact USD formatter for big numbers (market cap, volume) — always
+ * rounds to exactly 2 decimal places within its scale, matching CMC's
+ * homepage style ("$2.65T", "$162.26B") instead of the full un-abbreviated
+ * figure. Falls back to formatUsd's normal 2-decimal formatting below $1K.
+ */
+export function formatUsdCompact(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  const abs = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+  if (abs >= 1e12) return `${sign}$${(abs / 1e12).toFixed(2)}T`;
+  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(2)}M`;
+  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(2)}K`;
+  return usdFormatter.format(value);
+}
+
 // Dynamic small-value USD formatter — shows up to 5 decimals for sub-$1
 // prices (so GEMS at $0.0000064 reads as "$0.00001" instead of "$0.01").
 // Negative values use the same logic with the minus sign prepended.
