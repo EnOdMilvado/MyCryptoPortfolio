@@ -91,12 +91,12 @@ export function HoldingsBarChart({
 
   return (
     <div className="space-y-3">
-      {/* All bars share the available width via flex-1 so 15 bars fit
-          inside the card without a horizontal scrollbar. min-w-0 lets
-          labels truncate; very narrow viewports still degrade gracefully
-          since the symbol label is short. */}
+      {/* All bars share the available width via flex-1. With the default
+          topN=8 (per Or's spec: max 8 bars, more breathing room, %
+          always visible) the gap is wider than the old 15-bar default so
+          bars don't feel cramped. min-w-0 lets labels truncate. */}
       <ul
-        className="flex items-end gap-1 sm:gap-1.5"
+        className="flex items-end gap-3 sm:gap-5"
         style={{ minHeight: "240px" }}
       >
         {bars.map((b, i) => {
@@ -150,7 +150,7 @@ export function HoldingsBarChart({
               >
                 {b.label}
               </span>
-              <span className="text-[9px] sm:text-[10px] text-text-muted tabular">
+              <span className="text-[11px] sm:text-xs font-semibold text-text-muted tabular">
                 {b.pct.toFixed(1)}%
               </span>
             </li>

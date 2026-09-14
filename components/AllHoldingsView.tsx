@@ -444,6 +444,7 @@ export function AllHoldingsOverview({
         (barRows.length > 0 ? (
           <HoldingsBarChart
             data={barRows}
+            topN={8}
             btcPriceUsd={btcPriceUsd}
             onBarClick={focusAsset}
           />
