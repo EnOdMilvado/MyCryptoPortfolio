@@ -601,11 +601,14 @@ export function AggregatedHoldingsTable({
                     <td className="px-2 py-2.5 align-middle text-left tabular text-sm whitespace-nowrap">
                       {formatAmount(r.totalAmount)}
                     </td>
-                    {/* USD */}
+                    {/* USD — abbreviated ("$1.2K", "$125.6K", "$2.65M", …)
+                        per Or's request so it never collides with the
+                        Amount column's text on narrow / mobile widths. */}
                     <td className="px-2 py-2.5 align-middle text-left whitespace-nowrap">
                       <UsdValue
                         value={r.totalUsd}
                         priceUsd={r.hasPrice ? 1 : null}
+                        compact
                         className="tabular font-semibold"
                       />
                     </td>
