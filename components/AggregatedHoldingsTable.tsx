@@ -385,8 +385,9 @@ export function AggregatedHoldingsTable({
               across the card with no dead space in the middle. On mobile we
               hide Amount / 24h / Wallets columns and let Asset + USD grow to
               fill the row; key info is embedded inline under the Asset name. */}
-          {/* 10 columns when showBtc, 9 otherwise:
-              Include / Asset / Price / 24h / Amount / USD / [BTC] / % / Wallets / Address / CMC */}
+          {/* 9 columns when showBtc, 8 otherwise (Amount + USD are merged
+              into one stacked column, see the <td> below):
+              Include / Asset / Price / 24h / Amount+USD / [BTC] / % / Wallets / Address / CMC */}
           <colgroup>
             {/* MUST have exactly one <col> per <th>/<td> column below, in
                 the same order — including columns hidden on mobile via
@@ -400,8 +401,7 @@ export function AggregatedHoldingsTable({
             <col className="w-[40%] sm:w-[14%]" /> {/* Asset */}
             <col className="hidden sm:table-column sm:w-[10%]" /> {/* Price */}
             <col className="hidden sm:table-column sm:w-[10%]" /> {/* 24h */}
-            <col className="w-[18%] sm:w-[8%]" /> {/* Amount */}
-            <col className="w-[30%] sm:w-[12%]" /> {/* USD */}
+            <col className="w-[30%] sm:w-[16%]" /> {/* Amount / USD (stacked) */}
             {pnl && <col className="hidden sm:table-column sm:w-[10%]" />}
             {pnl && <col className="hidden sm:table-column sm:w-[10%]" />}
             {pnl && <col className="w-[24%] sm:w-[11%]" />}
@@ -442,18 +442,16 @@ export function AggregatedHoldingsTable({
                   onClick={() => toggleSort("change24h")}
                 />
               </th>
+              {/* Amount + USD are now stacked in ONE column (Amount on
+                  top, USD below — see the matching <td> below), so this
+                  is a single header. Sort still defaults to the USD-value
+                  sort key since that's the more common ranking; clicking
+                  again would need a real split-header if per-field sort
+                  is wanted later. */}
               <th className="px-2 py-2.5 text-left">
                 <SortHeader
-                  label="Amount"
-                  active={sortKey === "totalAmount"}
-                  dir={sortDir}
-                  onClick={() => toggleSort("totalAmount")}
-                />
-              </th>
-              <th className="px-2 py-2.5 text-left">
-                <SortHeader
-                  label="USD"
-                  active={sortKey === "totalUsd"}
+                  label="Amount / USD"
+                  active={sortKey === "totalUsd" || sortKey === "totalAmount"}
                   dir={sortDir}
                   onClick={() => toggleSort("totalUsd")}
                 />
@@ -597,25 +595,30 @@ export function AggregatedHoldingsTable({
                         </span>
                       )}
                     </td>
-                    {/* Amount — always visible (before USD), even on mobile.
-                        Abbreviated ("76.5K") per Or's request: an
-                        aggregated cross-wallet/cross-network total (e.g.
-                        ETH bridged across many L2s) can run to 6-7 raw
-                        digits, which reads as alarmingly/incorrectly huge
-                        even though the sum itself is correct. */}
-                    <td className="px-2 py-2.5 align-middle text-left tabular text-sm whitespace-nowrap" title={formatAmount(r.totalAmount)}>
-                      {formatAmountCompact(r.totalAmount)}
-                    </td>
-                    {/* USD — abbreviated ("$1.2K", "$125.6K", "$2.65M", …)
-                        per Or's request so it never collides with the
-                        Amount column's text on narrow / mobile widths. */}
-                    <td className="px-2 py-2.5 align-middle text-left whitespace-nowrap">
-                      <UsdValue
-                        value={r.totalUsd}
-                        priceUsd={r.hasPrice ? 1 : null}
-                        compact
-                        className="tabular font-semibold"
-                      />
+                    {/* Amount + USD — stacked in ONE cell (Amount on top,
+                        USD below, both left-aligned to each other) per
+                        Or's layout request, instead of two separate
+                        side-by-side columns that could visually collide.
+                        Both abbreviated ("76.5K" / "$110.29K") since an
+                        aggregated cross-wallet/cross-network total can run
+                        to 6-7 raw digits — alarming-looking even though the
+                        sum itself is correct. Full precise amount is still
+                        available via the cell's title (hover/long-press). */}
+                    <td
+                      className="px-2 py-2.5 align-middle text-left whitespace-nowrap"
+                      title={formatAmount(r.totalAmount)}
+                    >
+                      <div className="flex flex-col gap-0.5">
+                        <span className="tabular text-sm text-text-muted leading-none">
+                          {formatAmountCompact(r.totalAmount)}
+                        </span>
+                        <UsdValue
+                          value={r.totalUsd}
+                          priceUsd={r.hasPrice ? 1 : null}
+                          compact
+                          className="tabular font-semibold leading-none"
+                        />
+                      </div>
                     </td>
                     {/* Buys / Sells / P&L (date-range scoped) */}
                     {pnl &&
@@ -691,7 +694,7 @@ export function AggregatedHoldingsTable({
                   </tr>
                   {isExpanded && (
                     <tr key={`${r.key}-expand`} className="bg-surface-2/40">
-                      <td colSpan={(showBtc ? 11 : 10) + (hideable ? 1 : 0) + (pnl ? 3 : 0)} className="px-4 py-3">
+                      <td colSpan={(showBtc ? 10 : 9) + (hideable ? 1 : 0) + (pnl ? 3 : 0)} className="px-4 py-3">
                         <div className="text-xs text-text-muted mb-2">
                           {r.contributors.length}{" "}
                           {r.contributors.length === 1 ? "holding" : "holdings"} on{" "}
@@ -767,7 +770,7 @@ export function AggregatedHoldingsTable({
             {sorted.length === 0 && (
               <tr>
                 <td
-                  colSpan={(showBtc ? 11 : 10) + (hideable ? 1 : 0) + (pnl ? 3 : 0)}
+                  colSpan={(showBtc ? 10 : 9) + (hideable ? 1 : 0) + (pnl ? 3 : 0)}
                   className="px-3 py-6 text-center text-text-muted"
                 >
                   No assets match the current filter
@@ -783,7 +786,6 @@ export function AggregatedHoldingsTable({
                 <td className="px-2 py-2.5 text-left text-xs uppercase tracking-wide text-text-muted">
                   Total
                 </td>
-                <td className="hidden sm:table-cell px-2 py-2.5" />
                 <td className="hidden sm:table-cell px-2 py-2.5" />
                 <td className="hidden sm:table-cell px-2 py-2.5" />
                 <td className="px-2 py-2.5 text-left whitespace-nowrap tabular">
