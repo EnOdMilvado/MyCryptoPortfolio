@@ -5,7 +5,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { CmcLink } from "./CmcLink";
 import { CHAIN_LABEL } from "@/lib/chains/types";
 import { tokenExplorerUrl } from "@/lib/chains/explorers";
-import { formatAmount, formatBtc, formatUsd, shortenAddress } from "@/lib/format";
+import { formatAmount, formatAmountCompact, formatBtc, formatUsd, shortenAddress } from "@/lib/format";
 import { isLikelySpam } from "@/lib/spam";
 import { useAllHoldings } from "./AllHoldingsView";
 import { ChainPill } from "./ChainPill";
@@ -568,7 +568,7 @@ export function AggregatedHoldingsTable({
                           </span>
                         )}
                         <span className="tabular truncate">
-                          {formatAmount(r.totalAmount)}
+                          {formatAmountCompact(r.totalAmount)}
                         </span>
                         <span className="whitespace-nowrap">
                           · {r.walletCount}{" "}
@@ -597,9 +597,14 @@ export function AggregatedHoldingsTable({
                         </span>
                       )}
                     </td>
-                    {/* Amount — always visible (before USD), even on mobile. */}
-                    <td className="px-2 py-2.5 align-middle text-left tabular text-sm whitespace-nowrap">
-                      {formatAmount(r.totalAmount)}
+                    {/* Amount — always visible (before USD), even on mobile.
+                        Abbreviated ("76.5K") per Or's request: an
+                        aggregated cross-wallet/cross-network total (e.g.
+                        ETH bridged across many L2s) can run to 6-7 raw
+                        digits, which reads as alarmingly/incorrectly huge
+                        even though the sum itself is correct. */}
+                    <td className="px-2 py-2.5 align-middle text-left tabular text-sm whitespace-nowrap" title={formatAmount(r.totalAmount)}>
+                      {formatAmountCompact(r.totalAmount)}
                     </td>
                     {/* USD — abbreviated ("$1.2K", "$125.6K", "$2.65M", …)
                         per Or's request so it never collides with the

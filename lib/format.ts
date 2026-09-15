@@ -86,6 +86,28 @@ export function formatAmount(value: number | null | undefined): string {
   return value >= 1 ? amountLarge.format(value) : amountSmall.format(value);
 }
 
+/**
+ * Abbreviated token-amount formatter ("76.5K", "288.5K", "44.7K", ...) —
+ * same K/M/B/T scaling as formatUsdCompact but WITHOUT a "$" prefix, since
+ * this is a raw token quantity, not a dollar figure. Used in the All
+ * Holdings summary table's Amount column: an aggregated holding across
+ * many wallets/networks (e.g. ETH bridged across 10+ L2s, or a token with
+ * naturally huge unit counts) can run into 6-7 raw digits, which reads as
+ * alarmingly large/wrong at a glance even though the underlying math is
+ * correct. Below 1000 still shows the full precise amount (small
+ * quantities are exactly where the extra decimals matter).
+ */
+export function formatAmountCompact(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  const abs = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+  if (abs >= 1e12) return `${sign}${(abs / 1e12).toFixed(2)}T`;
+  if (abs >= 1e9) return `${sign}${(abs / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `${sign}${(abs / 1e6).toFixed(2)}M`;
+  if (abs >= 1e3) return `${sign}${(abs / 1e3).toFixed(1)}K`;
+  return formatAmount(value);
+}
+
 export function shortenAddress(addr: string, head = 6, tail = 4): string {
   if (!addr) return "";
   if (addr.length <= head + tail + 1) return addr;
