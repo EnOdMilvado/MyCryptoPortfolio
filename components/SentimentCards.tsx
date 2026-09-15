@@ -217,18 +217,14 @@ export function AltSeasonBar({ score }: { score: number }) {
         rx={radius}
         fill="url(#alt-bar-grad)"
       />
-      {/* Knob: a slim white/surface-colored vertical line through the
-          bar, outlined in the theme's text color, for a sharp, precise
-          marker instead of a soft dot. */}
-      <rect
-        x={knobX - 1.5}
-        y={0}
-        width={3}
-        height={height + 8}
-        rx={1.5}
-        fill="rgb(var(--surface))"
-        stroke="rgb(var(--text))"
-        strokeWidth={1.25}
+      {/* Knob: a solid filled dot, sized to the colored bar's own height
+          (not taller than it), matching CoinMarketCap's style — per Or's
+          feedback the previous hollow/outlined rect looked unfinished. */}
+      <circle
+        cx={knobX}
+        cy={knobY + 4}
+        r={height / 2}
+        fill="rgb(var(--text))"
       />
     </svg>
   );
