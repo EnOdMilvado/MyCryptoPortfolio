@@ -184,48 +184,64 @@ export function AltSeasonBar({ score }: { score: number }) {
   // instead of just sitting on top of it.
   const height = 8;
   const radius = height / 2;
-  const knobX = (Math.max(0, Math.min(100, score)) / 100) * width;
-  const knobY = height / 2;
 
   // Three zones as rectangles. The middle zone uses a neutral surface color
   // tuned to read fine on both light and dark themes (the brand colors at
   // each end are vivid enough that the middle should be subtle).
+  //
+  // The knob is rendered as a separate absolutely-positioned HTML element,
+  // NOT inside the SVG. The SVG uses preserveAspectRatio="none" so the bar
+  // stretches to fill any container width — but that same stretch also
+  // distorts anything drawn inside the SVG's own coordinate space (a
+  // circle in viewBox units becomes a horizontally-stretched ellipse once
+  // scaled to a much wider rendered box). Per Or's "too elongated, make it
+  // rounder" feedback, the fix is to keep the knob OUTSIDE that transform
+  // entirely, positioned by percentage with true CSS pixel dimensions so
+  // it's always a perfect circle regardless of the bar's rendered width.
+  const knobPct = Math.max(0, Math.min(100, score));
   return (
-    <svg
-      width="100%"
-      height={height + 8}
-      viewBox={`0 0 ${width} ${height + 8}`}
-      preserveAspectRatio="none"
-      aria-label={`Altcoin season index ${score} of 100`}
-      role="img"
-      className="block"
-    >
-      <defs>
-        <linearGradient id="alt-bar-grad" x1="0" x2="1" y1="0" y2="0">
-          <stop offset="0%" stopColor="#F7931A" />
-          <stop offset="25%" stopColor="#F6CFA0" />
-          <stop offset="50%" stopColor="#D8E0F0" />
-          <stop offset="75%" stopColor="#A8B6E8" />
-          <stop offset="100%" stopColor="#627EEA" />
-        </linearGradient>
-      </defs>
-      <rect
-        x="0"
-        y={4}
-        width={width}
-        height={height}
-        rx={radius}
-        fill="url(#alt-bar-grad)"
+    <div className="relative" style={{ height: height + 8 }}>
+      <svg
+        width="100%"
+        height={height + 8}
+        viewBox={`0 0 ${width} ${height + 8}`}
+        preserveAspectRatio="none"
+        aria-label={`Altcoin season index ${score} of 100`}
+        role="img"
+        className="block"
+      >
+        <defs>
+          <linearGradient id="alt-bar-grad" x1="0" x2="1" y1="0" y2="0">
+            <stop offset="0%" stopColor="#F7931A" />
+            <stop offset="25%" stopColor="#F6CFA0" />
+            <stop offset="50%" stopColor="#D8E0F0" />
+            <stop offset="75%" stopColor="#A8B6E8" />
+            <stop offset="100%" stopColor="#627EEA" />
+          </linearGradient>
+        </defs>
+        <rect
+          x="0"
+          y={4}
+          width={width}
+          height={height}
+          rx={radius}
+          fill="url(#alt-bar-grad)"
+        />
+      </svg>
+      {/* Knob: solid filled dot, sized to the colored bar's own height,
+          matching CoinMarketCap's style. True CSS circle (width ===
+          height, rounded-full) so it can never stretch into an ellipse. */}
+      <div
+        className="absolute rounded-full"
+        style={{
+          left: `${knobPct}%`,
+          top: 4,
+          width: height,
+          height,
+          marginLeft: -height / 2,
+          backgroundColor: "rgb(var(--text))",
+        }}
       />
-      {/* Knob: a solid filled dot, sized to the colored bar's own height
-          (not taller than it), matching CoinMarketCap's style — per Or's
-          feedback the previous hollow/outlined rect looked unfinished. */}
-      <circle
-        cx={knobX}
-        cy={knobY + 4}
-        r={height / 2}
-        fill="rgb(var(--text))"
-      />
-    </svg>
+    </div>
   );
 }
