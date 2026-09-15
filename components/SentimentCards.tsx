@@ -177,8 +177,13 @@ function AltSeasonCard({ value }: { value: AltcoinSeason | null }) {
  */
 export function AltSeasonBar({ score }: { score: number }) {
   const width = 140;
-  const height = 14;
-  const radius = 4;
+  // Thinner bar + sharper knob per Or's feedback ("not sharp enough") —
+  // was 14px tall with a soft two-circle knob that blended into the
+  // gradient. Now 8px tall, and the knob is a smaller solid-fill circle
+  // with a crisp contrasting ring so it visually "cuts" through the bar
+  // instead of just sitting on top of it.
+  const height = 8;
+  const radius = height / 2;
   const knobX = (Math.max(0, Math.min(100, score)) / 100) * width;
   const knobY = height / 2;
 
@@ -212,9 +217,19 @@ export function AltSeasonBar({ score }: { score: number }) {
         rx={radius}
         fill="url(#alt-bar-grad)"
       />
-      {/* Knob */}
-      <circle cx={knobX} cy={knobY + 4} r={7} fill="rgb(var(--surface))" />
-      <circle cx={knobX} cy={knobY + 4} r={5} fill="rgb(var(--text))" />
+      {/* Knob: a slim white/surface-colored vertical line through the
+          bar, outlined in the theme's text color, for a sharp, precise
+          marker instead of a soft dot. */}
+      <rect
+        x={knobX - 1.5}
+        y={0}
+        width={3}
+        height={height + 8}
+        rx={1.5}
+        fill="rgb(var(--surface))"
+        stroke="rgb(var(--text))"
+        strokeWidth={1.25}
+      />
     </svg>
   );
 }
