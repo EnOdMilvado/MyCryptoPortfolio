@@ -157,6 +157,13 @@ const SYMBOL_TO_CG: Record<string, string> = {
   // TRU collision guard: TrueFi (Ethereum) is the real token we want,
   // not the unrelated CMC ticker match that can surface as Truebit.
   TRU: "truefi",
+  // UFO collision guard: UFO Gaming (Ethereum, ~$3.4e-8) is the real
+  // token Or holds on MEXC. DexScreener search-by-symbol also matches an
+  // unrelated "The UFO Token" meme coin on Solana (~$0.19, 2 pools) that
+  // out-ranks UFO Gaming's single genuine Ethereum pool by pool COUNT in
+  // resolveByConsensus — producing a fake $57.6M balance for 300M UFO
+  // instead of the real ~$10.
+  UFO: "ufo-gaming",
 };
 
 /**
@@ -168,6 +175,7 @@ const SYMBOL_TO_CG: Record<string, string> = {
  */
 const KNOWN_COLLISION_SYMBOL_TO_CG_ID: Record<string, string> = {
   TRU: "truefi",
+  UFO: "ufo-gaming",
 };
 
 /**
