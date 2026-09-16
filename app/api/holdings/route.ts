@@ -194,15 +194,35 @@ export async function POST(request: Request) {
   }
 
   // Record a portfolio snapshot for the change-over-time cards.
-  // Total = sum of every cached value_usd belonging to this user.
-  const { data: totalRows } = await supabase
+  // Total = sum of every cached wallet value_usd belonging to this user
+  // PLUS every exchange balance's value_usd. The dashboard's own live
+  // total already includes exchanges (see app/dashboard/page.tsx), but
+  // this snapshot previously only summed crypto_holdings_cache (wallets),
+  // silently excluding exchange balances entirely. For a user whose
+  // portfolio is exchange-heavy (e.g. most of the value sitting on MEXC)
+  // that meant the recorded snapshot total never matched the real total,
+  // which showed up as the 24h change card being permanently stuck at
+  // "0.00% / +\$0.00" — the baseline and "latest" snapshot were both
+  // wrong by the same (missing) exchange amount, and if exchanges never
+  // successfully refreshed in the same run their wallet-only total could
+  // end up identical run after run.
+  const { data: walletTotalRows } = await supabase
     .from("crypto_holdings_cache")
     .select("value_usd, crypto_wallets!inner(portfolio_id, crypto_portfolios!inner(user_id))")
     .eq("crypto_wallets.crypto_portfolios.user_id", user.id);
-  const totalUsd = (totalRows ?? []).reduce(
+  const walletTotalUsd = (walletTotalRows ?? []).reduce(
     (s, r: { value_usd: number | string | null }) => s + Number(r.value_usd ?? 0),
     0,
   );
+  const { data: exchangeTotalRows } = await supabase
+    .from("crypto_exchange_balances_cache")
+    .select("value_usd, crypto_exchanges!inner(user_id)")
+    .eq("crypto_exchanges.user_id", user.id);
+  const exchangeTotalUsd = (exchangeTotalRows ?? []).reduce(
+    (s, r: { value_usd: number | string | null }) => s + Number(r.value_usd ?? 0),
+    0,
+  );
+  const totalUsd = walletTotalUsd + exchangeTotalUsd;
   await supabase.from("crypto_portfolio_snapshots").insert({
     user_id: user.id,
     total_usd: totalUsd,
